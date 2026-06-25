@@ -321,6 +321,15 @@ class DeliveryConfig:
     sort: bool = True  # Morton-order sort for front-to-back rendering
     generate_html_viewer: bool = False
 
+    # Optional extra LichtFeld-native splat exports (additive, off by default).
+    # Each format is exported via the MCP scene.export_* tool after training.
+    # Accepted values: "spz", "sog", "html", "rad".
+    # "usdz_nurec" is also supported but requires a proprietary NVIDIA NuRec
+    # licence — do NOT enable for commercial deliverables without licence review.
+    # Unknown values are skipped with a warning (non-fatal).
+    lichtfeld_extra_formats: list[str] = field(default_factory=list)
+    lichtfeld_extra_formats_sh_degree: int = 3
+
 
 @dataclass
 class ExportConfig:

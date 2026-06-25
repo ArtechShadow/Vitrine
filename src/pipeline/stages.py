@@ -895,6 +895,7 @@ class PipelineStages:
             artifacts={"ply_path": str(ply_path), "model_dir": str(model_dir)},
         )
         self._optimize_splat(ply_path, result)
+        self._export_native_splat_formats(result, ply_path)
         return result
 
     def _train_milo(self, colmap_dir: str, dataset_dir: Path) -> StageResult:
@@ -970,6 +971,7 @@ class PipelineStages:
         ply_for_opt = Path(artifacts["ply_path"]) if "ply_path" in artifacts else None
         if ply_for_opt:
             self._optimize_splat(ply_for_opt, stage_result)
+        self._export_native_splat_formats(stage_result, ply_for_opt)
         return stage_result
 
     def _select_mesh_backend(self) -> str:
@@ -1076,6 +1078,110 @@ class PipelineStages:
             )
             stage_result.metrics["splat_optimize_error"] = opt_result["error"]
 
+    def _export_native_splat_formats(
+        self,
+        stage_result: StageResult,
+        ply_path: Path | None = None,
+    ) -> None:
+        """Export extra LichtFeld-native splat formats requested in delivery config.
+
+        Non-fatal everywhere: errors are logged as warnings, never raised.
+        Scene-residency: if a ply_path is provided and McpClient exposes
+        load_checkpoint(), the scene is loaded before exporting so the MCP
+        session has the trained splat resident.  Docker-sidecar backends
+        (MILo/CoMe/GaussianWrapping) do not share the MCP session, so this
+        ensures exports work regardless of which backend was used.
+
+        Supported formats and their dispatch:
+          spz        -> client.export_spz
+          sog        -> client.export_sog
+          html       -> client.export_html
+          rad        -> client.export_rad
+          usdz_nurec -> client.export_usdz_nurec
+            # NVIDIA NuRec -- proprietary EULA; do not enable for commercial
+            # client deliverables without licence review.
+        """
+        extra_formats = self.config.delivery.lichtfeld_extra_formats
+        if not extra_formats:
+            return
+
+        from pipeline.mcp_client import McpClient
+
+        client = McpClient(
+            endpoint=self.config.mcp_endpoint,
+            timeout=self.config.mcp_timeout,
+        )
+        if not client.ping():
+            logger.warning(
+                "_export_native_splat_formats: MCP endpoint %s unreachable; "
+                "skipping all extra format exports",
+                self.config.mcp_endpoint,
+            )
+            return
+
+        # Ensure the trained scene is resident in the MCP session.
+        if ply_path is not None and ply_path.exists():
+            try:
+                client.load_checkpoint(str(ply_path))
+                logger.info(
+                    "_export_native_splat_formats: loaded checkpoint %s into MCP session",
+                    ply_path,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "_export_native_splat_formats: load_checkpoint failed (%s); "
+                    "attempting export anyway (may fail if scene not resident)",
+                    exc,
+                )
+        else:
+            logger.info(
+                "_export_native_splat_formats: no ply_path supplied; "
+                "export requires scene already resident in MCP session"
+            )
+
+        dispatch: dict[str, Any] = {
+            "spz": client.export_spz,
+            "sog": client.export_sog,
+            "html": client.export_html,
+            "rad": client.export_rad,
+            # NVIDIA NuRec -- proprietary EULA; do not enable for commercial
+            # client deliverables without licence review.
+            "usdz_nurec": client.export_usdz_nurec,
+        }
+        # Format key -> on-disk extension (usdz_nurec writes a .usdz container).
+        ext_map: dict[str, str] = {
+            "spz": "spz",
+            "sog": "sog",
+            "html": "html",
+            "rad": "rad",
+            "usdz_nurec": "usdz",
+        }
+        sh_degree = self.config.delivery.lichtfeld_extra_formats_sh_degree
+
+        delivery_dir = self.job_dir / "delivery"
+        delivery_dir.mkdir(parents=True, exist_ok=True)
+
+        for fmt in extra_formats:
+            exporter = dispatch.get(fmt)
+            if exporter is None:
+                logger.warning(
+                    "_export_native_splat_formats: unknown format %r; skipping",
+                    fmt,
+                )
+                continue
+            out_path = delivery_dir / f"scene.{ext_map.get(fmt, fmt)}"
+            try:
+                exporter(str(out_path), sh_degree=sh_degree)
+                stage_result.artifacts[f"delivery_splat_{fmt}"] = str(out_path)
+                logger.info(
+                    "_export_native_splat_formats: exported %s -> %s", fmt, out_path
+                )
+            except Exception as exc:
+                logger.warning(
+                    "_export_native_splat_formats: export %r failed (non-fatal): %s",
+                    fmt, exc,
+                )
+
     def _train_come(self, colmap_dir: str, dataset_dir: Path) -> StageResult:
         """Run CoMe training + mesh extraction in the dedicated sidecar.
 
@@ -1150,6 +1256,7 @@ class PipelineStages:
         ply_for_opt = Path(artifacts["ply_path"]) if "ply_path" in artifacts else None
         if ply_for_opt:
             self._optimize_splat(ply_for_opt, stage_result)
+        self._export_native_splat_formats(stage_result, ply_for_opt)
         return stage_result
 
     def _train_gaussianwrapping(self, colmap_dir: str, dataset_dir: Path) -> StageResult:
@@ -1233,6 +1340,7 @@ class PipelineStages:
         ply_for_opt = Path(artifacts["ply_path"]) if "ply_path" in artifacts else None
         if ply_for_opt:
             self._optimize_splat(ply_for_opt, stage_result)
+        self._export_native_splat_formats(stage_result, ply_for_opt)
         return stage_result
 
     # ------------------------------------------------------------------

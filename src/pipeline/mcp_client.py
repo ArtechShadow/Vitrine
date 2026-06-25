@@ -213,6 +213,18 @@ class McpClient:
     def export_html(self, path: str, **extra: Any) -> dict[str, Any]:
         return self.call_tool("scene.export_html", {"path": path, **extra})
 
+    def export_usdz_nurec(self, path: str, **extra: Any) -> dict[str, Any]:
+        """Export the loaded scene to USDZ via NVIDIA NuRec (v0.5.1+).
+
+        NOTE: NVIDIA NuRec is proprietary (EULA-gated). Do NOT enable for
+        commercial client deliverables without licence review.
+        """
+        return self.call_tool("scene.export_usdz_nurec", {"path": path, **extra})
+
+    def export_rad(self, path: str, **extra: Any) -> dict[str, Any]:
+        """Export the loaded scene to Radiance (.rad) format (v0.5.1+)."""
+        return self.call_tool("scene.export_rad", {"path": path, **extra})
+
     def export_status(self) -> dict[str, Any]:
         return self.call_tool("scene.export_status")
 
