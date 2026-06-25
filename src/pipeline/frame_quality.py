@@ -124,6 +124,8 @@ class FrameQuality:
     is_duplicate: bool = False
     duplicate_of: Optional[Path] = None
     coverage_score: float = 0.0
+    dir_sharpness: float = 0.0  # motion-blur-aware sharpness (structure-tensor lambda2); higher=sharper
+    blur_direction_deg: float = -1.0  # estimated motion-blur axis [0,180); -1 = N/A
     neural_score: float = -1.0  # SOTA NR-IQA (higher=better); -1 = not computed
     recommendation: Recommendation = Recommendation.KEEP
 
@@ -182,6 +184,47 @@ class FrameQualityAssessor:
         """
         laplacian = cv2.Laplacian(gray, cv2.CV_64F)
         return float(laplacian.var())
+
+    @staticmethod
+    def compute_directional_sharpness(gray: np.ndarray) -> Tuple[float, float]:
+        """Motion-blur-aware sharpness via the gradient structure tensor.
+
+        Variance-of-Laplacian is *isotropic*: a frame smeared horizontally still
+        has sharp vertical edges, so it reads as "sharp" despite being motion-
+        blurred. The structure tensor's *smaller* eigenvalue (lambda2) is large
+        only when gradient energy exists in BOTH directions, so it collapses under
+        directional motion blur — a far better motion-blur discriminator than VoL
+        (see the blur-gate research fan-in: nodes A+C converge on this). Cheap,
+        full-res, CPU; also yields the blur direction.
+
+        Args:
+            gray: ``(H, W)`` uint8 grayscale image.
+
+        Returns:
+            ``(sharpness, direction_deg)`` — ``sharpness`` is the mean smaller
+            structure-tensor eigenvalue (higher = sharp in all directions);
+            ``direction_deg`` is the estimated motion-blur axis in ``[0, 180)``
+            degrees (perpendicular to the dominant edges), or ``-1`` if undefined.
+        """
+        g = gray.astype(np.float32)
+        gx = cv2.Sobel(g, cv2.CV_32F, 1, 0, ksize=3)
+        gy = cv2.Sobel(g, cv2.CV_32F, 0, 1, ksize=3)
+        # Structure-tensor components, locally averaged over a Gaussian window.
+        jxx = cv2.GaussianBlur(gx * gx, (7, 7), 0)
+        jyy = cv2.GaussianBlur(gy * gy, (7, 7), 0)
+        jxy = cv2.GaussianBlur(gx * gy, (7, 7), 0)
+        disc = np.sqrt(np.maximum((jxx - jyy) ** 2 + 4.0 * jxy * jxy, 0.0))
+        lambda2 = 0.5 * (jxx + jyy - disc)  # per-pixel smaller eigenvalue
+        sharpness = float(np.mean(lambda2))
+        # Global blur direction via the structure-tensor double-angle estimate:
+        # the dominant-edge orientation; motion blur runs perpendicular to it.
+        sxx, syy, sxy = float(jxx.sum()), float(jyy.sum()), float(jxy.sum())
+        if abs(sxx - syy) < 1e-6 and abs(sxy) < 1e-6:
+            direction = -1.0
+        else:
+            edge_axis = 0.5 * np.degrees(np.arctan2(2.0 * sxy, sxx - syy))
+            direction = float((edge_axis + 90.0) % 180.0)
+        return sharpness, direction
 
     @staticmethod
     def compute_exposure(gray: np.ndarray) -> Tuple[float, float]:
@@ -289,6 +332,7 @@ class FrameQualityAssessor:
         exp_mean, exp_std = self.compute_exposure(gray)
         phash = self.compute_phash(gray)
         coverage = self.compute_coverage(gray)
+        dir_sharp, blur_dir = self.compute_directional_sharpness(gray)
 
         is_under = exp_mean < self.exposure_low
         is_over = exp_mean > self.exposure_high
@@ -324,6 +368,8 @@ class FrameQualityAssessor:
             is_overexposed=is_over,
             phash=phash,
             coverage_score=coverage,
+            dir_sharpness=dir_sharp,
+            blur_direction_deg=blur_dir,
             neural_score=neural,
             recommendation=rec,
         )
@@ -460,6 +506,7 @@ class FrameQualityAssessor:
                 selected=[],
                 reason=(f"only {len(good)} good frames < required {min_good_frames}"
                         f" (median NR-IQA={median_neural:.1f})"),
+                recapture_recommended=True,
             )
 
         # Accepted: optionally thin to target_frames by windowed best-of so the
@@ -478,19 +525,22 @@ class FrameQualityAssessor:
             median_neural=median_neural,
             selected=[r.path for r in selected],
             reason=f"{len(good)} good frames >= {min_good_frames}; selected {len(selected)}",
+            recapture_recommended=(median_neural >= 0 and median_neural < self.min_neural_score),
         )
 
     @staticmethod
     def _windowed_best(frames: List[FrameQuality], target: int) -> List[FrameQuality]:
-        """Pick the single best frame (neural score, else blur) in each of
-        ``target`` consecutive temporal windows — quality + even coverage."""
+        """Pick the single best frame in each of ``target`` consecutive temporal
+        windows — quality + even coverage. Ranks by motion-blur-aware directional
+        sharpness (structure-tensor lambda2) — the strongest per-frame motion-blur
+        signal — with neural NR-IQA then VoL as tiebreaks (blur-gate research)."""
         n = len(frames)
         if target >= n:
             return frames
         edges = np.linspace(0, n, target + 1).round().astype(int)
 
-        def key(fq: FrameQuality) -> float:
-            return fq.neural_score if fq.neural_score >= 0 else fq.blur_score
+        def key(fq: FrameQuality) -> Tuple[float, float, float]:
+            return (fq.dir_sharpness, fq.neural_score, fq.blur_score)
 
         out: List[FrameQuality] = []
         for a, b in zip(edges[:-1], edges[1:]):
@@ -518,6 +568,10 @@ class VideoQualityVerdict:
         median_neural: Median SOTA NR-IQA over the video (-1 if not computed).
         selected: Chosen frame paths (empty when rejected).
         reason: Human-readable explanation, suitable for logging / a flag.
+        recapture_recommended: True when the footage is too soft to trust — the
+            video was rejected, or its median NR-IQA sits below the usable floor
+            even though it passed. The honest "this capture needs a reshoot" flag;
+            no gate recovers detail the sensor never recorded.
     """
     source: Path
     accepted: bool
@@ -527,3 +581,4 @@ class VideoQualityVerdict:
     median_neural: float
     selected: List[Path]
     reason: str
+    recapture_recommended: bool = False
