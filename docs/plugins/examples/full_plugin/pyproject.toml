@@ -1,0 +1,12 @@
+[project]
+name = "gaussian_analyzer"
+version = "1.0.0"
+description = "Analyze and visualize gaussian splat properties"
+authors = [{name = "LichtFeld Examples"}]
+dependencies = []
+
+[tool.lichtfeld]
+hot_reload = true
+plugin_api = ">=1,<2"
+lichtfeld_version = ">=0.4.2"
+required_features = []

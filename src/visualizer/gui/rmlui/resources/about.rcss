@@ -1,0 +1,64 @@
+.info-table {
+    margin-bottom: 8dp;
+}
+
+.info-row {
+    display: flex;
+    align-items: center;
+    padding: 1dp 0;
+}
+
+.info-key {
+    width: 120dp;
+    font-size: 12dp;
+}
+
+.info-val {
+    font-size: 12dp;
+}
+
+.info-val--copy {
+    cursor: pointer;
+}
+
+.info-val--copy:hover {
+    text-decoration: underline;
+}
+
+.link-row {
+    display: flex;
+    align-items: center;
+    padding: 2dp 0;
+}
+
+.link-label {
+    margin-right: 6dp;
+    font-size: 12dp;
+}
+
+.link-url {
+    cursor: pointer;
+    font-size: 12dp;
+    background-color: transparent;
+    border-width: 0;
+    padding: 0;
+}
+
+.link-url:hover {
+    text-decoration: underline;
+}
+
+.footer {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-top: 4dp;
+}
+
+.footer-text {
+    font-size: 12dp;
+}
+
+.footer-sep {
+    font-size: 12dp;
+}

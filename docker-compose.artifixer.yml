@@ -1,0 +1,63 @@
+# ArtiFixer recon-enhancement sidecar (ADR-020) — OPTIONAL overlay.
+#
+# NVIDIA ArtiFixer (SIGGRAPH 2026) forked to run on RTX 6000 Ada (sm_89). Trains
+# its own 3DGRUT recon from the COLMAP-posed image set Vitrine already produces,
+# enhances it with the ArtiFixer video-diffusion prior (fills holey/unobserved
+# regions), and exports a standard 3DGS PLY that src/pipeline/artifixer_adapter.py
+# feeds into the unchanged CoMe/TSDF -> texture -> FBX -> UE path.
+#
+# Like milo/come this is a sleep-infinity sidecar driven by `docker exec` and is
+# per-scene gated (ADR-020) — it is NOT part of the default pipeline. The 67.6 GB
+# weight is NOT baked into the image; it is bind-mounted (ARTIFIXER_CKPT_DIR).
+#
+# Bring up (after building the image — see docs/artifixer-recon-enhancement.md):
+#   docker compose -f docker-compose.consolidated.yml -f docker-compose.artifixer.yml up -d artifixer
+#
+# Reaches the rest of the stack by name over v2g-net (e.g. http://vitrine-comfyui:8188).
+
+services:
+  artifixer:
+    build:
+      # Context is docker/artifixer so ./ArtiFixer is the pinned nv-tlabs/ArtiFixer
+      # submodule (the Dockerfile COPYs ./ArtiFixer/thirdparty/).
+      context: docker/artifixer
+      dockerfile: Dockerfile.ada-sm89
+    image: gaussian-toolkit-artifixer:ada-sm89
+    container_name: artifixer
+    hostname: artifixer
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=1
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      # SDPA path on Ada (no FlashAttention-3/4); bf16 default — see ADR-020.
+      - TORCH_CUDA_ARCH_LIST=8.9
+      - HF_HOME=/opt/hf-cache
+      - PYTHONUNBUFFERED=1
+    # GPU pinning is via `runtime: nvidia` + NVIDIA_VISIBLE_DEVICES=1 (above) —
+    # the proven-working pattern on this host. A `deploy.resources.devices`
+    # (DeviceRequests) block COMBINED with the legacy nvidia runtime double-injects
+    # the device and breaks CUDA init ("CUDA unknown error") while nvidia-smi still
+    # works — so it is intentionally omitted here.
+    shm_size: "32g"
+    working_dir: /workspace
+    volumes:
+      # The ArtiFixer application code (the image bakes only thirdparty/ deps).
+      - ./docker/artifixer/ArtiFixer:/workspace
+      # The 67.6 GB artifixer-14b.pt weight — point ARTIFIXER_CKPT_DIR at the
+      # real location (the download lives at ~/artifixer-ada/ckpt). Read-only.
+      - ${ARTIFIXER_CKPT_DIR:-./data/artifixer/ckpt}:/workspace/ckpt:ro
+      # COLMAP-posed inputs + enhanced-recon outputs (shared with the pipeline).
+      - ./output:/workspace/output
+      # Qwen3-VL-30B prep captioner cache (prep-time only).
+      - hf-cache:/opt/hf-cache
+    entrypoint: ["sleep", "infinity"]
+    restart: unless-stopped
+    networks:
+      - v2g-net
+
+# v2g-net is created by the main stack / scripts/run_comfyui.sh; join it as external.
+# hf-cache is defined by docker-compose.consolidated.yml (this overlay is always
+# combined with it: -f docker-compose.consolidated.yml -f docker-compose.artifixer.yml).
+networks:
+  v2g-net:
+    external: true

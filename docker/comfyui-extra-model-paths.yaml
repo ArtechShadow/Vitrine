@@ -1,0 +1,27 @@
+# Vitrine — register the custom model folder-types against the UNIFIED models tree.
+# Models now live natively at data/comfyui/models (mounted /comfyui/models); this
+# file only exists to register the non-standard folder-types (trellis2, hunyuan3d,
+# sam3d, …) that custom nodes look up. base_path is the native models dir — there
+# is no separate /staging mount any more (ADR: single models dir).
+vitrine_models:
+  base_path: /comfyui/models
+  checkpoints: checkpoints
+  diffusion_models: diffusion_models
+  unet: unet
+  vae: vae
+  text_encoders: text_encoders
+  clip: clip
+  clip_vision: clip_vision
+  loras: loras
+  controlnet: controlnet
+  embeddings: embeddings
+  upscale_models: upscale_models
+  style_models: style_models
+  trellis2: trellis2
+  hunyuan3d: hunyuan3d
+  sam3d: sam3d
+  sam2: sam2
+  sam3: sam3
+  sams: sams
+  grounding-dino: grounding-dino
+  RMBG: RMBG

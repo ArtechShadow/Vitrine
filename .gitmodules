@@ -1,0 +1,9 @@
+[submodule "external/libvterm"]
+	path = external/libvterm
+	url = https://github.com/neovim/libvterm.git
+[submodule "docker/artifixer/ArtiFixer"]
+	path = docker/artifixer/ArtiFixer
+	url = https://github.com/nv-tlabs/ArtiFixer.git
+[submodule "vendor/lichtfeld-studio"]
+	path = vendor/lichtfeld-studio
+	url = https://github.com/MrNeRF/LichtFeld-Studio.git

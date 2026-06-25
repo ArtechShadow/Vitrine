@@ -1,0 +1,366 @@
+/* SPDX-FileCopyrightText: 2025 LichtFeld Studio Authors
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later */
+
+#pragma once
+
+#include "core/export.hpp"
+#include "input/key_codes.hpp"
+#include <chrono>
+#include <cstdint>
+#include <filesystem>
+#include <functional>
+#include <map>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <variant>
+#include <vector>
+
+namespace lfs::vis::input {
+
+    enum class ToolMode {
+        GLOBAL = 0,
+        SELECTION,
+        BRUSH,
+        TRANSLATE,
+        ROTATE,
+        SCALE,
+        ALIGN,
+        CROP_BOX,
+    };
+
+    inline constexpr size_t kToolModeCount = 8;
+
+    enum class Action {
+        NONE = 0,
+        // Camera
+        CAMERA_ORBIT,
+        CAMERA_PAN,
+        CAMERA_ZOOM,
+        CAMERA_ROLL,
+        CAMERA_MOVE_FORWARD,
+        CAMERA_MOVE_BACKWARD,
+        CAMERA_MOVE_LEFT,
+        CAMERA_MOVE_RIGHT,
+        CAMERA_MOVE_UP,
+        CAMERA_MOVE_DOWN,
+        CAMERA_SET_HOME,
+        CAMERA_FOCUS_SELECTION,
+        CAMERA_SET_PIVOT,
+        CAMERA_NEXT_VIEW,
+        CAMERA_PREV_VIEW,
+        CAMERA_SPEED_UP,
+        CAMERA_SPEED_DOWN,
+        ZOOM_SPEED_UP,
+        ZOOM_SPEED_DOWN,
+        // View
+        TOGGLE_SPLIT_VIEW,
+        TOGGLE_INDEPENDENT_SPLIT_VIEW,
+        TOGGLE_GT_COMPARISON,
+        TOGGLE_DEPTH_MODE, // Deprecated: migrated to TOGGLE_SELECTION_DEPTH_FILTER on load
+        CYCLE_PLY,
+        // Editing
+        DELETE_SELECTED, // Delete selected Gaussians (selection tool)
+        DELETE_NODE,     // Delete selected PLY node (global mode)
+        UNDO,
+        REDO,
+        INVERT_SELECTION,
+        DESELECT_ALL,
+        SELECT_ALL,
+        COPY_SELECTION,
+        PASTE_SELECTION,
+        // Depth filter
+        DEPTH_ADJUST_FAR,
+        DEPTH_ADJUST_SIDE, // Deprecated: migrated to DEPTH_ADJUST_FAR on load
+        TOGGLE_SELECTION_DEPTH_FILTER,
+        TOGGLE_SELECTION_CROP_FILTER,
+        // Tools
+        BRUSH_RESIZE,
+        CYCLE_BRUSH_MODE,
+        CONFIRM_POLYGON,
+        CANCEL_POLYGON,
+        UNDO_POLYGON_VERTEX,
+        CYCLE_SELECTION_VIS,
+        // Selection
+        SELECTION_REPLACE,
+        SELECTION_ADD,
+        SELECTION_REMOVE,
+        SELECT_MODE_CENTERS,
+        SELECT_MODE_RECTANGLE,
+        SELECT_MODE_POLYGON,
+        SELECT_MODE_LASSO,
+        SELECT_MODE_RINGS,
+        SELECT_MODE_COLOR,
+        // Misc
+        APPLY_CROP_BOX,
+        // Node picking
+        NODE_PICK,
+        NODE_RECT_SELECT,
+        // UI
+        TOGGLE_UI,
+        TOGGLE_FULLSCREEN,
+        // Sequencer
+        SEQUENCER_ADD_KEYFRAME,
+        SEQUENCER_UPDATE_KEYFRAME,
+        SEQUENCER_PLAY_PAUSE,
+        // Tool switching
+        TOOL_SELECT,
+        TOOL_TRANSLATE,
+        TOOL_ROTATE,
+        TOOL_SCALE,
+        TOOL_MIRROR,
+        TOOL_BRUSH,
+        TOOL_ALIGN,
+        // Pie menu
+        PIE_MENU,
+        DEPTH_ADJUST_NEAR, // Deprecated: migrated to DEPTH_ADJUST_FAR on load
+        CAMERA_RESET_HOME,
+        HISTOGRAM_ZOOM_MARKED,
+
+    };
+
+    enum class ShortcutScope : uint8_t {
+        Global,
+        GlobalWhenNotTextEditing,
+        Viewport,
+    };
+
+    enum Modifier : int {
+        MODIFIER_NONE = KEYMOD_NONE,
+        MODIFIER_SHIFT = KEYMOD_SHIFT,
+        MODIFIER_CTRL = KEYMOD_CTRL,
+        MODIFIER_ALT = KEYMOD_ALT,
+        MODIFIER_SUPER = KEYMOD_SUPER,
+    };
+
+    enum class MouseButton {
+        LEFT = static_cast<int>(AppMouseButton::LEFT),
+        RIGHT = static_cast<int>(AppMouseButton::RIGHT),
+        MIDDLE = static_cast<int>(AppMouseButton::MIDDLE),
+    };
+
+    struct KeyTrigger {
+        int key;
+        int modifiers = MODIFIER_NONE;
+        bool on_repeat = false;
+    };
+
+    struct MouseButtonTrigger {
+        MouseButton button;
+        int modifiers = MODIFIER_NONE;
+        bool double_click = false;
+    };
+
+    struct MouseScrollTrigger {
+        int modifiers = MODIFIER_NONE;
+        // If set, the trigger fires only while this non-modifier key is held —
+        // e.g. CAMERA_ROLL defaults to Scroll while R is held.
+        std::optional<int> chord_key;
+
+        constexpr MouseScrollTrigger() = default;
+        constexpr explicit MouseScrollTrigger(int modifiers_,
+                                              std::optional<int> chord_key_ = std::nullopt)
+            : modifiers(modifiers_),
+              chord_key(chord_key_) {}
+    };
+
+    struct MouseDragTrigger {
+        MouseButton button = MouseButton::LEFT;
+        int modifiers = MODIFIER_NONE;
+        std::optional<int> chord_key;
+
+        constexpr MouseDragTrigger() = default;
+        constexpr explicit MouseDragTrigger(MouseButton button_,
+                                            int modifiers_ = MODIFIER_NONE,
+                                            std::optional<int> chord_key_ = std::nullopt)
+            : button(button_),
+              modifiers(modifiers_),
+              chord_key(chord_key_) {}
+    };
+
+    using InputTrigger = std::variant<KeyTrigger, MouseButtonTrigger, MouseScrollTrigger, MouseDragTrigger>;
+
+    enum TriggerKindFlag : uint8_t {
+        TRIGGER_KIND_KEY = 1 << 0,
+        TRIGGER_KIND_MOUSE_BUTTON = 1 << 1,
+        TRIGGER_KIND_MOUSE_SCROLL = 1 << 2,
+        TRIGGER_KIND_MOUSE_DRAG = 1 << 3,
+    };
+
+    enum class ActionSection : uint8_t {
+        None,
+        Navigation,
+        NavigationGlobal,
+        Selection,
+        SelectionGlobal,
+        Depth,
+        Brush,
+        CropBox,
+        Editing,
+        ViewGlobal,
+        Tools,
+        Sequencer,
+        UI,
+        NodePicking,
+    };
+
+    struct ActionDescriptor {
+        uint8_t allowed_kinds = 0;
+        bool prefers_physical_key = false;
+        bool allows_extra_modifiers = false;
+        bool prefers_single_click = false;
+        bool inherits_from_global = false;
+        ActionSection ui_section = ActionSection::None;
+    };
+
+    LFS_VIS_API const ActionDescriptor& describe(Action action);
+
+    struct Binding {
+        ToolMode mode = ToolMode::GLOBAL;
+        InputTrigger trigger;
+        Action action;
+        std::string description;
+    };
+
+    struct Profile {
+        std::string name;
+        std::string description;
+        std::vector<Binding> bindings;
+    };
+
+    struct BindingConflict {
+        Action other_action;
+        ToolMode other_mode;
+    };
+
+    struct CaptureState {
+        bool active = false;
+        ToolMode mode = ToolMode::GLOBAL;
+        Action action = Action::NONE;
+        std::optional<InputTrigger> captured;
+        bool waiting_for_double_click = false;
+        int pending_button = -1;
+        int pending_mods = 0;
+        std::optional<int> pending_chord_key;
+        bool pending_button_down = false;
+        bool has_pending_mouse_position = false;
+        double pending_mouse_x = 0.0;
+        double pending_mouse_y = 0.0;
+        std::chrono::steady_clock::time_point first_click_time;
+        static constexpr double DOUBLE_CLICK_WAIT_TIME = 0.4;
+        static constexpr double DRAG_CAPTURE_THRESHOLD_PX = 4.0;
+    };
+
+    class LFS_VIS_API InputBindings {
+    public:
+        InputBindings();
+
+        void loadProfile(const std::string& name);
+        void saveProfile(const std::string& name) const;
+        bool loadProfileFromFile(const std::filesystem::path& path);
+        bool saveProfileToFile(const std::filesystem::path& path) const;
+        std::vector<std::string> getAvailableProfiles() const;
+        const std::string& getCurrentProfileName() const { return current_profile_name_; }
+        std::uint64_t getBindingsRevision() const { return bindings_revision_; }
+
+        static std::filesystem::path getConfigDir();
+
+        // Query effective bindings. Mode-local bindings are checked first; actions
+        // marked as inherited then fall back to GLOBAL.
+        Action getActionForKey(ToolMode mode, int key, int modifiers) const;
+        Action getActionForMouseButton(ToolMode mode, MouseButton button, int modifiers, bool is_double_click = false) const;
+        // held_keys: non-modifier keys currently held in press order; chord lookup
+        // checks newest first (e.g. R+Scroll for Camera Roll). Pass an empty list
+        // to query non-chord bindings only.
+        Action getActionForScroll(ToolMode mode, int modifiers, const std::vector<int>& held_keys = {}) const;
+        Action getActionForDrag(ToolMode mode, MouseButton button, int modifiers, const std::vector<int>& held_keys = {}) const;
+
+        std::optional<InputTrigger> getTriggerForAction(Action action, ToolMode mode = ToolMode::GLOBAL) const;
+        std::optional<InputTrigger> getEffectiveTriggerForAction(Action action, ToolMode mode = ToolMode::GLOBAL) const;
+        std::string getTriggerDescription(Action action, ToolMode mode = ToolMode::GLOBAL) const;
+        [[nodiscard]] std::string getLocalizedTriggerDescription(
+            Action action, ToolMode mode = ToolMode::GLOBAL) const;
+
+        // Get the key code for a continuous action (returns -1 if not a key binding)
+        int getKeyForAction(Action action, ToolMode mode = ToolMode::GLOBAL) const;
+
+        void setBinding(ToolMode mode, Action action, const InputTrigger& trigger);
+        void clearBinding(ToolMode mode, Action action);
+
+        // Returns the first binding that shares this trigger. Mode-local bindings
+        // are checked first; actions marked as inherited then fall back to GLOBAL.
+        // The action being re-bound is ignored so callers can detect conflicts
+        // after a capture has already replaced its own previous binding.
+        [[nodiscard]] std::optional<BindingConflict> findConflict(
+            ToolMode mode, const InputTrigger& trigger, Action ignore_action) const;
+
+        // Callback for binding changes (e.g., to refresh cached keys)
+        using BindingsChangedCallback = std::function<void()>;
+        void setOnBindingsChanged(BindingsChangedCallback callback) { on_bindings_changed_ = std::move(callback); }
+
+        // Capture mode for rebinding (called from Python)
+        void startCapture(ToolMode mode, Action action);
+        void cancelCapture();
+        void captureKey(int key, int mods);
+        void captureKey(int physical_key, int logical_key, int mods);
+        void captureMouseButton(int button, int mods, std::optional<int> chord_key = std::nullopt);
+        void captureMouseButton(int button, int mods, double x, double y, std::optional<int> chord_key = std::nullopt);
+        void captureMouseButtonRelease(int button);
+        void captureMouseMove(double x, double y);
+        void captureScroll(int mods, std::optional<int> chord_key = std::nullopt);
+        void updateCapture();
+        bool isCapturing() const { return capture_state_.active; }
+        const CaptureState& getCaptureState() const { return capture_state_; }
+        std::optional<InputTrigger> getAndClearCaptured();
+
+        // Get all bindings for a mode (for displaying in UI)
+        std::vector<std::pair<Action, std::string>> getBindingsForMode(ToolMode mode) const;
+
+        static Profile createDefaultProfile();
+
+    private:
+        static constexpr int MODIFIER_MASK = MODIFIER_SHIFT | MODIFIER_CTRL | MODIFIER_ALT | MODIFIER_SUPER;
+
+        std::string current_profile_name_;
+        std::vector<Binding> bindings_;
+        std::uint64_t bindings_revision_ = 0;
+
+        using KeyMapKey = std::tuple<ToolMode, int, int>;
+        using MouseMapKey = std::tuple<ToolMode, MouseButton, int, bool>;
+        using ScrollMapKey = std::pair<ToolMode, int>;
+        using DragMapKey = std::tuple<ToolMode, MouseButton, int>;
+        // chord-aware variants are keyed by (..., chord_key).
+        using ScrollChordKey = std::tuple<ToolMode, int, int>;
+        using DragChordKey = std::tuple<ToolMode, MouseButton, int, int>;
+
+        std::map<KeyMapKey, Action> key_map_;
+        std::map<MouseMapKey, Action> mouse_button_map_;
+        std::map<ScrollMapKey, Action> scroll_map_;
+        std::map<DragMapKey, Action> drag_map_;
+        std::map<ScrollChordKey, Action> scroll_chord_map_;
+        std::map<DragChordKey, Action> drag_chord_map_;
+
+        BindingsChangedCallback on_bindings_changed_;
+        CaptureState capture_state_;
+
+        void rebuildLookupMaps();
+        void notifyBindingsChanged();
+
+        size_t migrateLoadedProfile(int version);
+        size_t collapseRedundantModeBindings(int version);
+    };
+
+    LFS_VIS_API std::string getActionName(Action action);
+    LFS_VIS_API std::string getKeyName(int key);
+    LFS_VIS_API std::string getMouseButtonName(MouseButton button);
+    LFS_VIS_API std::string getModifierString(int modifiers);
+    [[nodiscard]] LFS_VIS_API ShortcutScope shortcutScopeForAction(Action action);
+
+    [[nodiscard]] LFS_VIS_API std::string_view actionNameKey(Action action);
+    [[nodiscard]] LFS_VIS_API std::optional<Action> actionFromName(std::string_view name);
+    [[nodiscard]] LFS_VIS_API std::string getLocalizedActionName(Action action);
+    [[nodiscard]] LFS_VIS_API std::string getLocalizedToolModeName(ToolMode mode);
+    [[nodiscard]] LFS_VIS_API std::string localizeTriggerDescription(std::string description);
+
+} // namespace lfs::vis::input

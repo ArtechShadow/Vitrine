@@ -1,0 +1,242 @@
+services:
+  gaussian-toolkit:
+    build:
+      context: .
+      dockerfile: Dockerfile.consolidated
+    image: gaussian-toolkit:latest
+    container_name: gaussian-toolkit
+    hostname: gaussian-toolkit
+    runtime: nvidia
+
+    env_file:
+      - .env
+
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
+      - CUDA_HOME=/usr/local/cuda
+      - DISPLAY=:1
+      - HF_TOKEN=${HF_TOKEN}
+      - HF_HOME=/opt/hf-cache
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - SAM3_BPE_PATH=/opt/sam3-repo/sam3/assets/bpe_simple_vocab_16e6.txt.gz
+      - MILO_CONTAINER=milo
+      # Bulk capture ingestion (drive_ingestor.py). The remote is an rclone
+      # remote+base path; each sub-folder is one capture session. Auth comes
+      # from the mounted rclone config secret below — never an env-var token.
+      - DRIVE_INGEST_REMOTE=${DRIVE_INGEST_REMOTE:-}
+      - RCLONE_CONFIG=/run/secrets/rclone_conf
+      # Canonical ComfyUI endpoint (ADR-014) reached over the v2g-net network —
+      # launched by scripts/run_comfyui.sh (owner ComfyUI + staged model tree).
+      - V2G_COMFYUI_URL=${V2G_COMFYUI_URL:-http://vitrine-comfyui:8188}
+      - V2G_COMFYUI_API_URL=${V2G_COMFYUI_API_URL:-http://vitrine-comfyui:8188}
+      # Local agent LLM (ADR-013) — DiffusionGemma 26B-A4B, OpenAI-compatible,
+      # TEXT-ONLY. Served on the GPU *host* (llm-server/), so the container reaches
+      # it via the host gateway (see extra_hosts). Override to a LAN IP if needed.
+      - V2G_AGENT_LLM_URL=${V2G_AGENT_LLM_URL:-http://host.docker.internal:8084}
+      - V2G_AGENT_LLM_MODEL=${V2G_AGENT_LLM_MODEL:-diffusiongemma-26B-A4B-it-Q8_0}
+      # Claude Code model override — set to a specific model for in-container
+      # oversight agents. When unset, Claude Code uses its session default.
+      - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-opus-4-6}
+
+    # Resolve host.docker.internal to the host so the pipeline can reach the
+    # host-served DiffusionGemma endpoint (V2G_AGENT_LLM_URL) from inside the net.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu, compute, utility, graphics]
+        limits:
+          memory: 200g
+
+    shm_size: "64g"
+
+    ports:
+      - "7860:7860"    # Web interface (Flask)
+      - "7681:7681"    # Web terminal (ttyd)
+      - "8188:8188"    # ComfyUI
+      - "45677:45677"  # LichtFeld Studio MCP
+      - "5902:5901"    # VNC (host 5902 — agentbox already publishes host 5901)
+
+    # Networking (see top-level `networks:`):
+    #   v2g-net            — internal pipeline bus: reaches vitrine-comfyui:8188
+    #                        and the milo/come mesh sidecars by name.
+    #   visionclaw_network — shared external net. Joining it lets the VisionFlow
+    #                        app (host :4000) and the agentbox/Claude Code env
+    #                        reach the pipeline by name (gaussian-toolkit / vitrine)
+    #                        on its service ports (web 7860, MCP 45677, comfy 8188).
+    networks:
+      v2g-net:
+        aliases:
+          - gaussian-toolkit
+      visionclaw_network:
+        aliases:
+          - gaussian-toolkit
+          - vitrine
+
+    volumes:
+      # Unified models tree (ADR: single models dir). This is ComfyUI's native
+      # model store, shared read-only with the main pipeline as /models-staging
+      # (sota_registry + entrypoint resolve weights here). The entrypoint
+      # symlinks — never copies — these categories into /opt/models.
+      - ${MODELS_STAGING_DIR:-./data/comfyui/models}:/models-staging:ro
+      # Persistent output data (web UI writes to /data/output)
+      - ./output:/data/output
+      # Host-compiled LichtFeld binary (bind-mount from host build)
+      - ${LICHTFELD_BUILD_DIR:-./build}:/opt/gaussian-toolkit/build:ro
+      # Host CUDA libs (if container CUDA version differs from host)
+      - /opt/cuda/lib64:/opt/host-cuda-libs:ro
+      # Persistent model cache (survives rebuilds)
+      - models-data:/opt/models
+      # HuggingFace cache (shared path via HF_HOME env var)
+      - hf-cache:/opt/hf-cache
+      # Claude Code OAuth session (survives container recreation)
+      - claude-session:/home/ubuntu/.claude
+      # Live pipeline source (override baked-in code for dev iteration)
+      - ./src/pipeline:/opt/gaussian-toolkit/src/pipeline
+      - ./src/web:/opt/gaussian-toolkit/src/web
+      - ./CLAUDE_CONTAINER.md:/opt/gaussian-toolkit/CLAUDE.md:ro
+      # Live entrypoint — symlink-based model staging (NEVER copies the ~216G
+      # tree into /opt/models). Bind-mounted so the fix applies without rebuilding
+      # the 47G image; iterate the entrypoint without a rebuild.
+      - ./docker/entrypoint.sh:/opt/entrypoint.sh:ro
+      # Bulk ingestion scratch (drive_ingestor.py). Active session's raw videos
+      # are pulled to /data/raw and the working set (frames, COLMAP, model) to
+      # /data/scratch; both are purged after a verified upload. Point these at a
+      # large NVMe path on the host (250-500 GB recommended — see plan §4).
+      - ${DRIVE_RAW_HOST_DIR:-./data/raw}:/data/raw
+      - ${DRIVE_SCRATCH_HOST_DIR:-./data/scratch}:/data/scratch
+
+    secrets:
+      # rclone config holding the service-account-authenticated remote. Provide
+      # ./secrets/rclone.conf with a [remote] block referencing the GC service
+      # account JSON (service_account_file). Mounted read-only at
+      # /run/secrets/rclone_conf (RCLONE_CONFIG env points here).
+      - rclone_conf
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7860/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  # MILo sidecar — high-quality mesh extraction (Ubuntu 22.04 + CUDA 11.8)
+  # Also hosts GaussianWrapping (thin-structure backend) when built with
+  # INSTALL_GAUSSIANWRAPPING=1 (see ADR-005).
+  # Build: docker compose build milo
+  # Build with GaussianWrapping: docker compose build --build-arg INSTALL_GAUSSIANWRAPPING=1 milo
+  # The main container calls MILo via: docker exec milo python3 train.py ...
+  milo:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.milo
+      args:
+        # Gate: set to 1 to include GaussianWrapping (no-licence — dev only).
+        # See ADR-005 and docker/install_gaussianwrapping.sh.
+        INSTALL_GAUSSIANWRAPPING: ${INSTALL_GAUSSIANWRAPPING:-0}
+    image: gaussian-toolkit-milo:latest
+    container_name: milo
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['1']
+              capabilities: [gpu, compute, utility]
+    volumes:
+      - ./output:/data/output
+      - hf-cache:/opt/hf-cache
+    networks:
+      # v2g-net = internal pipeline bus; visionclaw_network = shared bus agentbox
+      # sits on, so agentbox agents reach this sidecar by name and `docker exec`
+      # into it (the main container calls it via `docker exec milo/come …`).
+      - v2g-net
+      - visionclaw_network
+    entrypoint: ["sleep", "infinity"]
+    restart: unless-stopped
+
+  # CoMe sidecar — confidence-based mesh extraction (Ubuntu 22.04 + CUDA 12.1)
+  # 3x faster than MILo (~25 min vs ~69 min on RTX 4090) at comparable F1.
+  # Build: docker compose build come
+  # Build with CoMe enabled: docker compose build --build-arg INSTALL_COME=1 come
+  #
+  # LICENSING GATE: CoMe has no LICENSE file as of 2026-05-26 (SPDX: NOASSERTION).
+  # Set INSTALL_COME=1 only after a permissive licence is reviewed. See ADR-004.
+  #
+  # The main container calls CoMe via: docker exec come python3 /opt/come/extract.py ...
+  come:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.come
+      args:
+        # Gate: set to 1 to include CoMe (no-licence — dev only). See ADR-004.
+        INSTALL_COME: ${INSTALL_COME:-0}
+    image: gaussian-toolkit-come:latest
+    container_name: come
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['1']
+              capabilities: [gpu, compute, utility]
+    volumes:
+      - ./output:/data/output
+      - hf-cache:/opt/hf-cache
+    networks:
+      # v2g-net = internal pipeline bus; visionclaw_network = shared bus agentbox
+      # sits on, so agentbox agents reach this sidecar by name and `docker exec`
+      # into it (the main container calls it via `docker exec milo/come …`).
+      - v2g-net
+      - visionclaw_network
+    entrypoint: ["sleep", "infinity"]
+    restart: unless-stopped
+
+networks:
+  # Internal pipeline bus. Compose creates it if missing; it is also created
+  # idempotently by scripts/run_comfyui.sh (`docker network create v2g-net`),
+  # which attaches vitrine-comfyui so the pipeline reaches it as
+  # http://vitrine-comfyui:8188. Pinning `name:` keeps it stable across both
+  # entry points (no project-name prefix).
+  v2g-net:
+    name: v2g-net
+  # Shared external network owned by the VisionFlow stack (visionclaw_*).
+  # gaussian-toolkit joins it so VisionFlow (host :4000) and the agentbox /
+  # Claude Code environment can reach the pipeline by name. It must already
+  # exist on the host before `docker compose up`:
+  #     docker network create visionclaw_network
+  # (or bring the visionclaw stack up first, which creates it).
+  visionclaw_network:
+    external: true
+
+volumes:
+  models-data:
+    driver: local
+  hf-cache:
+    driver: local
+  claude-session:
+    driver: local
+
+secrets:
+  # Create ./secrets/rclone.conf locally (gitignored). Example:
+  #   [captures]
+  #   type = drive            # or: type = google cloud storage
+  #   service_account_file = /run/secrets/gdrive_sa.json
+  #   root_folder_id = <shared folder id>
+  # The service account needs WRITE scope on the capture folder so outputs can
+  # be pushed back to <session>/outputs/ (see video-ingestion-plan §8 decisions).
+  rclone_conf:
+    # Defaults to the committed placeholder so `docker compose up` works without
+    # Drive creds; set RCLONE_CONF_FILE=./secrets/rclone.conf (gitignored) when
+    # ready to ingest. The worker only runs when DRIVE_INGEST_REMOTE is set.
+    file: ${RCLONE_CONF_FILE:-./secrets/rclone.conf.example}

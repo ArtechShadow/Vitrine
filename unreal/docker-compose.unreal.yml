@@ -1,0 +1,174 @@
+# Vitrine — Unreal Engine 5.8 export overlay (ADR-016).
+#
+# Self-contained under unreal/: the engine build (unreal/engine/), the runtime
+# scripts + .uproject (unreal/runtime/), this compose, and the Dockerfile all
+# live here. Overlay compose file; not folded into the consolidated stack.
+#
+# Usage (CANONICAL — single -f, run from the repo root; the consolidated stack /
+# VisionFlow already created the external networks). The single -f form makes
+# compose's project directory THIS file's dir (unreal/), so the ./engine,
+# ../output and ./runtime relative paths resolve correctly:
+#   docker compose -f unreal/docker-compose.unreal.yml up -d unreal unreal-mcp-bridge
+#
+# NOTE: do NOT layer this with the consolidated file as a second -f
+# (`-f docker-compose.consolidated.yml -f unreal/docker-compose.unreal.yml`): with
+# two -f files compose bases all relative paths at the FIRST file's dir (repo root),
+# so ./engine -> repo/engine etc. mis-mount. If you must combine them, add
+# `--project-directory unreal`. Verified 2026-06-21.
+#
+# Prerequisites:
+#   1. UE 5.8 Linux installed build extracted in-repo at unreal/engine/ (contains
+#      Engine/). Override the location with UNREAL_BUILD if it lives elsewhere.
+#   2. Networks exist (both are external; the consolidated stack / VisionFlow
+#      create them, or create manually):
+#        docker network create v2g-net
+#        docker network create visionclaw_network
+#      visionclaw_network is the shared bus agentbox sits on, so agentbox agents
+#      reach unreal:8000 / unreal:30010 / unreal-mcp-bridge:9100 by name and can
+#      `docker exec` into these containers via the mounted docker socket.
+#
+# Service ports (host-published):
+#   8000   — first-party Unreal MCP (HTTP+SSE, experimental)
+#   30010  — Web Remote Control (unicast HTTP, container-friendly)
+#   9100   — unreal-mcp-bridge (lightweight HTTP proxy for agent/pipeline use)
+
+services:
+  # ---------------------------------------------------------------------------
+  # unreal — headless UE 5.8 GPU service
+  # ---------------------------------------------------------------------------
+  unreal:
+    build:
+      context: ..
+      dockerfile: unreal/Dockerfile.unreal
+      args:
+        # NVIDIA base (no Epic ghcr needed — the engine is the mounted volume).
+        CUDA_TAG: ${CUDA_TAG:-12.8.1-runtime-ubuntu22.04}
+    image: vitrine-unreal:5.8
+    container_name: vitrine-unreal
+    hostname: unreal
+
+    runtime: nvidia
+    # UnrealEditor-Cmd REFUSES to run as root (aborts on startup). The engine
+    # binary is owned by uid 1000; run as that non-root user. (Verified via
+    # unreal/smoke_nullrhi.sh, 2026-06-21.)
+    user: "1000:1000"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${UNREAL_GPU:-1}
+      # uid 1000 has no /etc/passwd entry — pin a writable HOME for ~/.config/Epic.
+      - HOME=/tmp
+      # graphics: Vulkan/OpenGL for -RenderOffscreen (Lumen).
+      # compute:  CUDA for NVENC / GPU compute inside scripts.
+      # utility:  nvidia-smi + device management.
+      # (No DirectX / Path Tracer — Linux containers only.)
+      - NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility
+      # Root of the mounted UE 5.8 Linux installed build (contains Engine/).
+      - UE_ROOT=/opt/ue
+      - UE_PROJECT=${UE_PROJECT:-/vitrine/unreal/Vitrine.uproject}
+      - VITRINE_USD=${VITRINE_USD:-/usd_input/scene.usda}
+      # RENDER_MODE:
+      #   editor    = persistent windowed editor on Xvfb (real Vulkan RHI) that keeps
+      #               RC :30010 + MCP :8000 alive for the bridge/agents, x11vnc for
+      #               observation. DEFAULT — this is the agent-drivable control surface.
+      #   offscreen = one-shot Lumen MRQ render commandlet (batch). nullrhi = import only.
+      - RENDER_MODE=${RENDER_MODE:-editor}
+      - RENDER_OUTPUT=/renders
+      - DISPLAY=:1
+      - UE_MCP_PORT=8000
+      - UE_RC_PORT=30010
+
+    ports:
+      - "${UE_MCP_HOST_PORT:-8000}:8000"        # first-party Unreal MCP (HTTP+SSE)
+      - "${UE_RC_HOST_PORT:-30010}:30010"        # Web Remote Control (unicast)
+      - "${UE_VNC_HOST_PORT:-5905}:5901"         # x11vnc (host 5905 — agentbox owns 5901, toolkit 5902)
+
+    volumes:
+      # UE 5.8 Linux installed build (in-repo at unreal/engine/) -> /opt/ue.
+      # Override UNREAL_BUILD only if the build lives outside the repo (it must
+      # be the dir that contains Engine/). This replaces the gated Epic ghcr image.
+      # MUST be read-WRITE: on startup UE rewrites LibraryPath in its ThirdParty
+      # USD plugInfo.json files and writes DerivedDataCache; a :ro mount breaks
+      # the pxr USD plugin registry (Stage.Open returns 0 prims) and makes the
+      # editor exit non-zero. (Verified via unreal/smoke_nullrhi.sh, 2026-06-21.)
+      - ${UNREAL_BUILD:-./engine}:/opt/ue:rw
+      # pipeline USD output (scene.usda + textures + .ksplat) — read-only
+      - ${VITRINE_OUTPUT:-../output}:/usd_input:ro
+      # rendered frames output — read-write
+      - ${VITRINE_RENDERS:-../output/renders}:/renders:rw
+      # live-mount runtime scripts + .uproject so they can be iterated w/o rebuild
+      - ./runtime:/vitrine/unreal:ro
+
+    networks:
+      v2g-net:
+        aliases:
+          - unreal
+      visionclaw_network:
+        aliases:
+          - unreal
+
+    healthcheck:
+      # Web Remote Control /remote/info is the lightest always-available probe.
+      # UE editor cold-start on first run can take 60-150 s; allow for it.
+      test: ["CMD", "curl", "-fsS", "http://localhost:30010/remote/info"]
+      interval: 30s
+      timeout: 10s
+      retries: 8
+      start_period: 180s
+
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # unreal-mcp-bridge — lightweight HTTP proxy / MCP bridge (ADR-016)
+  #
+  # Wraps the Unreal Web Remote Control (:30010) and the first-party Unreal MCP
+  # (:8000) behind a single stable endpoint (:9100) for the agent / VisionFlow
+  # pipeline.  The bridge implementation lives in unreal/runtime/mcp_bridge.py;
+  # this service references it by bind-mount (./runtime -> /scripts/unreal).
+  #
+  # Built from the project's gaussian-toolkit image so it shares the Python
+  # runtime already present on the host without adding a separate base image.
+  # ---------------------------------------------------------------------------
+  unreal-mcp-bridge:
+    image: ${GAUSSIAN_TOOLKIT_IMAGE:-gaussian-toolkit:latest}
+    container_name: vitrine-unreal-mcp-bridge
+    hostname: unreal-mcp-bridge
+
+    # Override the gaussian-toolkit entrypoint with the bridge script directly.
+    entrypoint: ["python3", "/scripts/unreal/mcp_bridge.py"]
+
+    environment:
+      # Resolved inside v2g-net by service hostname.
+      - UE_REMOTE_CONTROL_URL=http://unreal:30010
+      - UE_MCP_URL=http://unreal:8000/mcp
+      - BRIDGE_PORT=${BRIDGE_PORT:-9100}
+
+    ports:
+      - "${BRIDGE_HOST_PORT:-9100}:9100"
+
+    volumes:
+      # Live-mount the runtime directory so mcp_bridge.py can be iterated.
+      - ./runtime:/scripts/unreal:ro
+
+    networks:
+      - v2g-net
+      - visionclaw_network
+
+    depends_on:
+      unreal:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+# ---------------------------------------------------------------------------
+# Networks — external; must exist before `docker compose up`
+# ---------------------------------------------------------------------------
+networks:
+  # Internal pipeline bus (created by the consolidated stack or by
+  # `docker network create v2g-net`).
+  v2g-net:
+    external: true
+  # Shared external network owned by the VisionFlow stack; lets the agent /
+  # VisionFlow app reach unreal:8000 and unreal:30010 by name.
+  # Create with: docker network create visionclaw_network
+  # (or bring the visionclaw stack up first).
+  visionclaw_network:
+    external: true

@@ -1,0 +1,109 @@
+/* SPDX-FileCopyrightText: 2025 LichtFeld Studio Authors
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later */
+
+#pragma once
+
+#include "core/modal_request.hpp"
+#include "gui/rmlui/rml_input_utils.hpp"
+#include "gui/rmlui/rmlui_manager.hpp"
+
+#include <RmlUi/Core/EventListener.h>
+#include <core/export.hpp>
+#include <cstddef>
+#include <deque>
+#include <mutex>
+#include <optional>
+#include <string>
+
+namespace Rml {
+    class Context;
+    class Element;
+    class ElementDocument;
+} // namespace Rml
+
+namespace lfs::vis {
+    struct Theme;
+}
+namespace lfs::vis::gui {
+
+    class RmlUIManager;
+    struct PanelInputState;
+
+    class LFS_VIS_API RmlModalOverlay {
+    public:
+        explicit RmlModalOverlay(RmlUIManager* rml_manager);
+        ~RmlModalOverlay();
+
+        RmlModalOverlay(const RmlModalOverlay&) = delete;
+        RmlModalOverlay& operator=(const RmlModalOverlay&) = delete;
+
+        void enqueue(lfs::core::ModalRequest request);
+        void processInput(const PanelInputState& input);
+        void render(int screen_w, int screen_h,
+                    float screen_x, float screen_y,
+                    float vp_x, float vp_y, float vp_w, float vp_h);
+        void releaseRendererResources();
+        void reloadResources();
+        void preload();
+
+        [[nodiscard]] bool isOpen() const;
+        [[nodiscard]] bool hasPendingRequest() const;
+        [[nodiscard]] bool hasPendingRenderWork() const;
+        [[nodiscard]] bool needsAnimationFrame() const;
+
+    private:
+        void initContext();
+        bool syncTheme();
+        void cacheElements();
+
+        void showNext();
+        void dismiss(const std::string& button_label);
+        bool dismissFirstEnabledButton();
+        void bindTextInputRevert();
+        void cancel();
+        lfs::core::ModalResult collectFormValues() const;
+
+        struct OverlayEventListener : Rml::EventListener {
+            RmlModalOverlay* overlay = nullptr;
+            void ProcessEvent(Rml::Event& event) override;
+        };
+
+        RmlUIManager* rml_manager_;
+        OverlayEventListener listener_;
+        rml_input::TextInputEscapeRevertController text_input_revert_;
+
+        Rml::Context* rml_context_ = nullptr;
+        Rml::ElementDocument* document_ = nullptr;
+
+        Rml::Element* el_backdrop_ = nullptr;
+        Rml::Element* el_dialog_ = nullptr;
+        Rml::Element* el_title_ = nullptr;
+        Rml::Element* el_form_ = nullptr;
+        Rml::Element* el_content_ = nullptr;
+        Rml::Element* el_input_row_ = nullptr;
+        Rml::Element* el_input_ = nullptr;
+        Rml::Element* el_button_row_ = nullptr;
+
+        bool elements_cached_ = false;
+
+        mutable std::mutex queue_mutex_;
+        std::deque<lfs::core::ModalRequest> queue_;
+        std::optional<lfs::core::ModalRequest> active_;
+
+        std::string base_rcss_;
+        std::size_t last_theme_signature_ = 0;
+        bool has_theme_signature_ = false;
+        int width_ = 0;
+        int height_ = 0;
+        CachedVulkanContextRender direct_cache_;
+        bool render_needed_ = true;
+        bool dialog_position_valid_ = false;
+        float last_dialog_left_ = 0.0f;
+        float last_dialog_top_ = 0.0f;
+        bool last_mouse_valid_ = false;
+        int last_mouse_x_ = 0;
+        int last_mouse_y_ = 0;
+    };
+
+} // namespace lfs::vis::gui

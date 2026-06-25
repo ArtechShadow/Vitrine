@@ -1,0 +1,66 @@
+# =============================================================================
+# Vitrine — Unreal Engine 5.8 USD scenegraph export + MCP control (ADR-016)
+#
+# Built from an NVIDIA CUDA base + the UE 5.8 *Linux installed build* mounted at
+# $UE_ROOT (/opt/ue). This needs NO Epic ghcr.io access — the engine binary is
+# supplied as a host volume (the extracted UE 5.8 Linux build lives in-repo at
+# unreal/engine/ and is bind-mounted; see unreal/docker-compose.unreal.yml and
+# ADR-016). The image only carries UE's Linux runtime prerequisites + the bridge.
+#
+# (Alternative, if you DO have Epic ghcr access: FROM ghcr.io/epicgames/unreal-
+#  engine:dev-5.8 instead and drop the prereq apt layer — see git history.)
+#
+# Linux containers: Vulkan/OpenGL/CUDA only — NO DirectX / Path Tracer. Headless
+# GPU rendering uses Lumen via -RenderOffscreen (Vulkan). -nullrhi for GPU-less
+# import/assemble.
+# =============================================================================
+ARG CUDA_TAG=12.8.1-runtime-ubuntu22.04
+FROM nvidia/cuda:${CUDA_TAG}
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# UE 5.8 Linux runtime prerequisites (the libs UnrealEditor-Cmd dynamically links
+# against; UE bundles most of its own, these are the system ones) + the bridge's
+# deps (curl for the healthcheck, python3 + requests for mcp_bridge.py). The
+# Vulkan ICD for NVIDIA is injected at runtime by the NVIDIA Container Toolkit
+# (NVIDIA_DRIVER_CAPABILITIES includes 'graphics').
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl ca-certificates python3 python3-pip \
+        libvulkan1 vulkan-tools mesa-vulkan-drivers \
+        libgl1 libglu1-mesa libsdl2-2.0-0 \
+        libx11-6 libxcb1 libxext6 libxfixes3 libxcursor1 libxrandr2 libxi6 \
+        libxrender1 libxss1 libxcomposite1 libxtst6 libxkbcommon0 \
+        libfontconfig1 libfreetype6 libnss3 libnspr4 \
+        libasound2 libpulse0 libgtk-3-0 libdbus-1-3 \
+        xvfb x11vnc fluxbox xauth x11-utils \
+        ffmpeg xdotool \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --no-cache-dir requests
+
+# Our headless import + render scripts + the MCP bridge + the .uproject.
+# Bind-mounted at runtime (the runtime/ volume in compose) so they can be
+# iterated without rebuilding; this COPY is the image fallback.
+COPY unreal/runtime/ /vitrine/unreal/
+RUN chmod +x /vitrine/unreal/entrypoint.sh
+
+# ---------------------------------------------------------------------------
+# Environment defaults (all overridable in compose / `docker run -e`)
+# ---------------------------------------------------------------------------
+# UE_ROOT     — mount the extracted UE 5.8 Linux build here (compose volume)
+# VITRINE_USD — absolute path to scene.usda inside the container
+# UE_PROJECT  — absolute path to the .uproject file
+# RENDER_MODE — "offscreen" (GPU, Lumen) | "nullrhi" (no GPU, import only)
+# UE_MCP_PORT / UE_RC_PORT — first-party MCP / Web Remote Control ports
+ENV UE_ROOT=/opt/ue \
+    VITRINE_USD=/usd_input/scene.usda \
+    UE_PROJECT=/vitrine/unreal/Vitrine.uproject \
+    RENDER_MODE=offscreen \
+    UE_MCP_PORT=8000 \
+    UE_RC_PORT=30010 \
+    NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility
+
+# Web Remote Control (:30010, unicast HTTP) + first-party Unreal MCP (:8000,
+# HTTP+SSE). Avoid the multicast Python remote-exec (:6766) — not docker-bridged.
+EXPOSE 8000 30010
+
+ENTRYPOINT ["/vitrine/unreal/entrypoint.sh"]

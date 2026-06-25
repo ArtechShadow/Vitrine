@@ -1,0 +1,65 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# ADA-SM89 FORK of ArtiFixer's Dockerfile.cuda12 — runs ArtiFixer on RTX 6000 Ada
+# (sm_89) / Ampere. Vendored into Vitrine per ADR-020 (research/decisions/
+# adr-020-artifixer-ada-fork-recon-enhancement.md). The ONLY changes vs upstream
+# (docker/artifixer/ArtiFixer/Dockerfile.cuda12) are build/CI: the FlashAttention-3
+# (Hopper) + FlashAttention-4 (Blackwell) install block and the FA smoke-asserts
+# are removed, and the COPY source is rebased onto the submodule. ZERO
+# application-code changes — the model's attention selector
+# (model_training/net/transformer.py:_select_attention_config) already falls
+# through to cuDNN SDPA for compute capability < 9 with no raise; FA3 imports are
+# guarded try/except; inference is bf16 and fits one 48 GB card. See
+# research/landscape/artifixer-fork-feasibility-qe.md (9-agent QE source audit).
+#
+# Build context is docker/artifixer/ (so ./ArtiFixer is the pinned submodule):
+#   docker build -f docker/artifixer/Dockerfile.ada-sm89 \
+#       -t gaussian-toolkit-artifixer:ada-sm89 docker/artifixer
+# (or via docker-compose.artifixer.yml). The 67.6 GB weight is NOT baked — it is
+# bind-mounted at runtime (ARTIFIXER_CKPT_DIR -> /workspace/ckpt).
+
+# CUDA 12 x86 — Ada Lovelace (RTX 6000 Ada, sm_89) and Ampere (sm_80/sm_86). NOT Hopper/Blackwell.
+FROM nvcr.io/nvidia/pytorch:25.01-py3
+
+ENV DEBIAN_FRONTEND=noninteractive
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+# gcc-11/g++-11 retained: required by nvcc for the 3DGRUT JIT cpp_extension build (host nvcc
+# rejects gcc >= 12). NOT a FlashAttention dependency.
+RUN apt-get update && apt-get install -y -qq --no-install-recommends \
+    wget git curl build-essential gcc-11 g++-11 libgl1-mesa-dev libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install torch==2.11.0 torchvision --index-url https://download.pytorch.org/whl/cu128
+RUN pip uninstall -y flash-attn opencv-python || true
+RUN rm -rf /usr/local/lib/python3.12/dist-packages/cv2*
+
+WORKDIR /workspace
+# Vendored COPY: source rebased from upstream ./thirdparty/ onto the submodule.
+COPY ./ArtiFixer/thirdparty/ ./thirdparty/
+
+# 3DGRUT — JIT via cpp_extension at first run; -DTCNN_MIN_GPU_ARCH=70 (sm_89 > 70), no -gencode pin.
+# Default prep uses the 3DGUT rasterizer (no OptiX/RT). TORCH_CUDA_ARCH_LIST scoped to Ada/Ampere
+# in case any extension builds ahead-of-time during `pip install -e .` (belt-and-suspenders).
+WORKDIR ./thirdparty/3DGRUT-ArtiFixer/
+ENV TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9"
+RUN pip install -r requirements.txt
+RUN bash scripts/install_slangc.sh /usr/local
+RUN pip install -e .
+
+# --- FlashAttention-3/4 install block REMOVED (was Dockerfile.cuda12:27-42) ---
+# FA3 (Dao-AILab hopper/, sm_90-only) and FA4 (flash-attn-4, sm_90/sm_100) do not build/run on
+# sm_89 and are not required: the model uses cuDNN SDPA + Triton flex_attention on Ada.
+
+RUN pip install accelerate==1.13.0 diffusers==0.37.1 transformers==5.5.0 ftfy
+
+WORKDIR /workspace
+RUN pip install einops scipy wandb tqdm Pillow matplotlib opencv-python-headless \
+    pyyaml torchmetrics imageio-ffmpeg h5py av torch-fidelity \
+    git+https://github.com/microsoft/MoGe.git
+
+# --- FA3/FA4 build-time smoke asserts REMOVED (was Dockerfile.cuda12:51-54) ---
+# Sanity checks that remain are arch-agnostic:
+RUN python -c "import torch; print('arch_list:', torch.cuda.get_arch_list())"
+RUN python -c "import cv2; print('cv2 ok:', cv2.__version__)"
+RUN python -c "from moge.model.v2 import MoGeModel; print('MoGe ok')"

@@ -1,0 +1,18 @@
+output/
+*.glb
+*.ply
+*.mp4
+test-data/
+research/gap-analysis-local/
+.git/
+# Large runtime trees — never part of any image build context. data/ holds the
+# unified models tree (~216G) + comfyui runtime + raw captures; unreal/engine/ is
+# the ~73G UE build. The unreal image still COPYs unreal/runtime/ (kept tracked).
+data/
+unreal/engine/
+# Build outputs — provided at runtime via bind mount (build/ -> /opt/.../build:ro)
+# or are local build artifacts, never needed in the image context.
+build/
+build*/
+onboarding/target/
+external/libtorch/

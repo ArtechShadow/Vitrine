@@ -1,0 +1,39 @@
+.video-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12dp;
+    margin-bottom: 8dp;
+}
+
+.video-card {
+    width: 160dp;
+    cursor: pointer;
+}
+
+.card-body {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 90dp;
+    border-width: 1dp;
+    transition: background-color border-color 0.12s quadratic-out;
+}
+
+.play-icon {
+    font-size: 22dp;
+}
+
+.card-title {
+    display: block;
+    font-size: 12dp;
+    margin-top: 4dp;
+    text-align: center;
+}
+
+.wiki-link {
+    cursor: pointer;
+}
+
+.wiki-link:hover {
+    text-decoration: underline;
+}

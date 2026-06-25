@@ -1,0 +1,150 @@
+name: Windows CUDA Build
+
+on:
+  push:
+    branches: [ dev, master ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  pull_request:
+    branches: [ dev, master ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+jobs:
+  test-plugin-venv:
+    if: github.repository == 'MrNeRF/LichtFeld-Studio' || github.event.pull_request.base.repo.full_name == 'MrNeRF/LichtFeld-Studio'
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Download Python embeddable
+        shell: pwsh
+        run: |
+          Invoke-WebRequest "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.zip" -OutFile python-embed.zip
+          Expand-Archive python-embed.zip -DestinationPath python-embed
+
+      - name: Test uv sync with embedded Python
+        shell: pwsh
+        run: |
+          $PYTHON = "$PWD\python-embed\python.exe"
+
+          # Create minimal test plugin
+          $PLUGIN = "$env:TEMP\test_plugin"
+          New-Item -ItemType Directory -Force -Path $PLUGIN
+          @"
+          [project]
+          name = "test-plugin"
+          version = "0.1.0"
+          requires-python = ">=3.12"
+          dependencies = []
+          "@ | Set-Content "$PLUGIN\pyproject.toml"
+
+          # Test 1: uv sync creates venv
+          uv sync --project $PLUGIN --python $PYTHON
+          if (-not (Test-Path "$PLUGIN\.venv\Scripts\python.exe")) {
+            Write-Error "FAIL: venv python not created"
+            exit 1
+          }
+          Write-Host "PASS: uv sync created venv with python.exe"
+
+          # Test 2: broken venv recovery
+          Remove-Item "$PLUGIN\.venv\Scripts\python.exe"
+          uv sync --project $PLUGIN --python $PYTHON
+          if (-not (Test-Path "$PLUGIN\.venv\Scripts\python.exe")) {
+            Write-Error "FAIL: broken venv not recovered"
+            exit 1
+          }
+          Write-Host "PASS: uv sync recovered broken venv"
+
+          # Test 3: uv sync works when PYTHONHOME is set (simulates in-app environment)
+          Remove-Item -Recurse -Force "$PLUGIN\.venv"
+          $env:PYTHONHOME = "$PWD\python-embed"
+          uv sync --project $PLUGIN --python $PYTHON
+          $env:PYTHONHOME = $null
+          if (-not (Test-Path "$PLUGIN\.venv\Scripts\python.exe")) {
+            Write-Error "FAIL: uv sync failed with PYTHONHOME set"
+            exit 1
+          }
+          Write-Host "PASS: uv sync works with PYTHONHOME set"
+
+          # Test 4: uv sync works when PYTHONHOME points to wrong location
+          Remove-Item -Recurse -Force "$PLUGIN\.venv"
+          $env:PYTHONHOME = "C:\nonexistent\path"
+          uv sync --project $PLUGIN --python $PYTHON
+          $env:PYTHONHOME = $null
+          if (-not (Test-Path "$PLUGIN\.venv\Scripts\python.exe")) {
+            Write-Error "FAIL: uv sync failed with wrong PYTHONHOME"
+            exit 1
+          }
+          Write-Host "PASS: uv sync resilient to wrong PYTHONHOME"
+
+  build-windows:
+    if: github.repository == 'MrNeRF/LichtFeld-Studio' || github.event.pull_request.base.repo.full_name == 'MrNeRF/LichtFeld-Studio'
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [Release, Debug]
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}\..\vcpkg
+      VCPKG_BUILD_TYPE: release
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Install CUDA 12.8
+        run: |
+          cd ..
+          Invoke-WebRequest https://developer.download.nvidia.com/compute/cuda/12.8.0/local_installers/cuda_12.8.0_571.96_windows.exe -OutFile cuda.exe -Verbose
+          Start-Process -FilePath .\cuda.exe -ArgumentList "-y -s -accepteula -toolkit -override -noDisplayDriver" -Wait
+
+      - name: Set CUDA environment
+        run: |
+          echo "CUDA_PATH_V12_8=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\libnvvp" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Cache vcpkg tool
+        id: cache-vcpkg-tool
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_ROOT }}
+          key: vcpkg-tool-${{ runner.os }}-2026-02-21
+          restore-keys: vcpkg-tool-${{ runner.os }}-
+
+      - name: Setup vcpkg
+        if: steps.cache-vcpkg-tool.outputs.cache-hit != 'true'
+        run: |
+          cd ..
+          git clone https://github.com/microsoft/vcpkg.git
+          .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+
+      - name: Cache vcpkg_installed
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg_installed
+          key: vcpkg-installed-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: vcpkg-installed-${{ runner.os }}-
+
+      - name: Configure
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DLFS_FAST_COMPILE=ON -DBUILD_PYTHON_STUBS=OFF -DLFS_DEV_IMPORT_SOURCE_PYTHON=OFF -DLFS_DEV_IMPORT_SOURCE_RESOURCES=OFF -DCUDA_DEVICE_DEBUG=OFF
+
+      - name: Build
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          set PATH=%CD%\build;%CD%\build\vcpkg_installed\x64-windows\bin;%PATH%
+          cmake --build build -j %NUMBER_OF_PROCESSORS%
