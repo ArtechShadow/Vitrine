@@ -159,27 +159,32 @@ flowchart TD
     classDef untested fill:#f9a825,stroke:#fff176,color:#000
 ```
 
-## The untested / under-explored paths (🟡) — ranked by likely upside
+## Track status — closed vs still-open (refreshed 2026-06-25)
 
-| # | Gap | Why it might be the missing quality lever | Why untested | Research node |
-|---|-----|-------------------------------------------|--------------|---------------|
-| 1 | **SOTA splat→mesh** (2DGS / GOF / RaDe-GS / SuGaR / PGSR) | We only ever ran TSDF/CoMe/MILo. If the room *isn't* purely capture-limited, a proper surface-recon method (2DGS gives watertight indoor meshes) could beat our lumpy TSDF blob outright. | We assumed TSDF was the path and concluded "capture-limited" before trying a real surface method. | A (3DGS→mesh) |
-| 2 | **Real 3DGS-in-UE plugin** (XScene-UE / Luma / UnrealGaussianSplatting) | Would replace the **blocky 522k-point LiDAR hack** with an actual splat render in UE — directly addresses "a point cloud render is certainly not correct." | No native UE 3DGS importer, so we hacked the LiDAR plugin instead of checking community plugins. | B (3DGS→UE) |
-| 3 | **Blender 3DGS addon** (KIRI "3DGS Render") → convert | The exact "conversion path via Blender almost certainly exists" hunch — import splat in Blender, render/convert, FBX→UE. | We jumped straight to custom UE Remote-Control scripting. | B (3DGS→UE) |
-| 4 | **Deblur PRE-processing** (NAFNet / Restormer / RVRT, or BAD-Gaussians) | If a deblur net upstream of COLMAP recovers sharpness, the **whole "recapture is the only fix" verdict collapses** and every downstream branch improves for free. | We do blur-aware *selection* but never *restoration*; concluded capture-limited. | C (deblur) |
-| 5 | **LichtFeld-NATIVE splat downstream** (campaign step 3) | The fork is the battle-tested 3DGS workstation; we trained its splat (task #21) but the room shipped from **CoMe**, not LichtFeld. Never used native render/export as a baseline. | Bespoke-momentum: we kept extending our own Python instead of leaning on the fork. | (internal — our own substrate) |
-| 6 | **Turnkey baseline** (Postshot / Polycam / Luma) | A 30-min run through a battle-tested tool would tell us our *quality ceiling* for this capture and whether our pipeline is under-performing it. | Never run as a sanity check. | D (full pipeline) |
-| 7 | **SAM3D-Objects** direct object path | Alternative to TRELLIS/Hunyuan for object meshes. | TRELLIS.2 already met the object bar, so deprioritised. | A/D (incidental) |
+Most of the original 🟡 gaps were *resolved* this session. The flowchart above is the original snapshot; **this
+table is the live status.**
 
-## Read of the tree
+| # | Track | Status now | Verdict |
+|---|-------|-----------|---------|
+| 1 | SOTA splat→mesh (2DGS/PGSR/GOF/…) | ✅ **2DGS tested** | NOT fairer than TSDF on dreamlab — RANSAC planarity 69.7% vs CoMe 72% (11cm band), both fail. **Capture-limited, not extractor-limited.** PGSR/GOF would likely match → deprioritised. Keep for *sharp* captures. |
+| 2 | Real 3DGS-in-UE plugin | ✅ **NanoGS validated** | Recompiled for UE 5.8; renders real Gaussians; the **full scene (pruned splat room + chair/vacuum/toolbox FBXs) stands in the editor** (`docs/renders/dreamlab/`). Replaces the LiDAR hack. |
+| 3 | Blender 3DGS "conversion" | ⬛ **debunked** | KIRI addon bakes splat→mesh (splat lost). Not a real splat path. |
+| 4 | Deblur PRE-processing (NAFNet/Restormer) | ⬛ **rejected** | Per-frame generative restoration hallucinates → breaks multi-view consistency (the *faithful* kind is #B below). |
+| 5 | LichtFeld-native splat downstream | ✅ **in use** | `splat_30000.ply` is the splat-hero room feeding NanoGS = campaign step 3 done. |
+| 6 | Turnkey baseline (Postshot/Polycam) | ⬛ **researched** | Consensus path documented; we matched it — no need to run. |
+| 7 | **SAM3D-Objects** | 🟡 **STILL OPEN** | Staged, never run; purpose-built for cluttered/occluded objects — clearest remaining upside (objects aren't blur-limited). |
 
-- The **green spine is dense and validated** — ingest → COLMAP → splat → {TSDF mesh | TRELLIS objects} → FBX → UE works end-to-end.
-- **Every quality complaint sits on a branch where the green path is a workaround and a 🟡 sits right next to it unexplored:**
-  - room mesh lumpy → 🟡 #1 SOTA surface recon never tried;
-  - UE room blocky → 🟡 #2/#3 real-splat-in-UE / Blender conversion never tried;
-  - "capture-limited, recapture only" → 🟡 #4 deblur restoration never tried;
-  - "are we using LichtFeld?" → 🟡 #5 native path never used downstream.
-- That clustering is exactly the user's thesis: **the low quality correlates with bespoke workarounds chosen before checking the battle-tested branch.** The 4 research nodes are scoped to convert #1–#4 (and #6) from 🟡 to a decision.
+### Still genuinely under-explored (the real backlog, ranked by upside)
+- 🟡 **A. SAM3D-Objects** — cluttered/occluded object reconstruction (#7). **Highest upside** (objects have no blur ceiling).
+- 🟡 **B. BAD-Gaussians / 3dgs-deblur** — *faithful* joint deblur-during-recon: the **only honest non-recapture lever** for the proven-blur-limited room (distinct from the rejected generative pre-deblur #4).
+- 🟡 **C. Object texture-refine** — StableGen-style FLUX.2/Qwen on mesh renders (both models staged).
+- 🟡 **D. VGGSfM front-end** + upstream **depth-supervised training** (`170ae4a0`) + **Densification (RoMa v2)** plugin — better poses/geometry/coverage from the *same* frames.
+- 🟡 **E. Blur-gate next layers** — optical-flow×shutter blur-magnitude, parallax-aware window spacing, Q-Align on survivors (the directional metric already shipped).
+
+## Read of the tree (refreshed)
+
+- The original thesis held: every quality complaint sat next to an unexplored battle-tested branch, and converting those 🟡→decision is exactly what closed #1–#6.
+- **The room is now *proven* capture-limited** (2DGS≈TSDF; recapture is its lever), so the biggest untapped quality is on the **objects** (SAM3D #A, texture-refine #C) — no blur ceiling there. **BAD-Gaussians (#B)** is the one *room* experiment still worth running.
 
 ## Research findings (4/4 nodes returned 2026-06-25)
 
