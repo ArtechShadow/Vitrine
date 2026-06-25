@@ -1,0 +1,176 @@
+diff --git a/data_processing/prepare_colmap_artifixer_inputs.py b/data_processing/prepare_colmap_artifixer_inputs.py
+index 46c41c4..a70273b 100644
+--- a/data_processing/prepare_colmap_artifixer_inputs.py
++++ b/data_processing/prepare_colmap_artifixer_inputs.py
+@@ -13,6 +13,7 @@ not run ArtiFixer inference.
+ from __future__ import annotations
+ 
+ import argparse
++import os
+ import shutil
+ import struct
+ from collections.abc import Sequence
+@@ -548,6 +549,9 @@ def render_reconstruction(args: argparse.Namespace, paths: PreparedPaths, checkp
+         return
+ 
+     paths.render_checkpoint_dir.parent.mkdir(parents=True, exist_ok=True)
++    # Ada sm_89 (48GB) fits the recon RENDER at reduced resolution; full-res 1968x3398
++    # OOMs (~47GB ray/tracer buffers). Env-gated, defaults to upstream behaviour (None).
++    _render_ds = float(os.environ.get("ARTIFIXER_RENDER_DOWNSAMPLE", "0")) or None
+     render_3dgrut_colmap(
+         checkpoint=checkpoint,
+         colmap_dir=paths.threedgrut_input_dir,
+@@ -556,6 +560,7 @@ def render_reconstruction(args: argparse.Namespace, paths: PreparedPaths, checkp
+         selected_indices=paths.selected_indices_path,
+         trajectory_path=source_trajectory_path,
+         trajectory_output_subdir="",
++        downsample_factor=_render_ds,
+     )
+ 
+ 
+diff --git a/data_processing/render_3dgrut_colmap.py b/data_processing/render_3dgrut_colmap.py
+index 5fcb0a1..fc6a160 100644
+--- a/data_processing/render_3dgrut_colmap.py
++++ b/data_processing/render_3dgrut_colmap.py
+@@ -128,7 +128,10 @@ def render_3dgrut_colmap(
+         path=str(dataset_dir),
+         out_dir=str(output_root),
+         save_gt=False,
+-        computes_extra_metrics=True,
++        # OOM mitigation (ArtiFixer-Ada): LPIPS(VGG)+SSIM load extra nets onto CUDA
++        # during render_all; the rendered frames are all we need. Disable with
++        # ARTIFIXER_RENDER_METRICS=0. Env-gated; default preserves upstream (True).
++        computes_extra_metrics=__import__("os").environ.get("ARTIFIXER_RENDER_METRICS", "1") not in ("0", "false", "False"),
+         config_overrides=config_overrides,
+     )
+     renderer.writer = None
+diff --git a/model_training/data/utils.py b/model_training/data/utils.py
+index 254e972..8a01809 100644
+--- a/model_training/data/utils.py
++++ b/model_training/data/utils.py
+@@ -423,11 +423,31 @@ def load_indexed_frames(
+ 
+ 
+ def resize_to_multiple_of_16(tensor: torch.Tensor) -> torch.Tensor:
+-    """Resize tensor spatial dimensions to be multiples of 16."""
++    """Resize tensor spatial dimensions to be multiples of 16.
++
++    OOM mitigation (ArtiFixer-Ada): env ARTIFIXER_ENHANCE_DOWNSCALE=<f> (f>1)
++    additionally divides H,W by f before the /16 rounding. The KV cache, VAE
++    activations and transformer cost scale with the latent token count (~res^2),
++    so on a single 48GB card the full-res (1968x3398) trajectory render OOMs at
++    _initialize_kv_cache even with VAE tiling. Downscaling the enhance inputs
++    here keeps all resolution-bearing tensors (rgb_rendered/gt/neighbors/opacity)
++    consistent, and camera intrinsics are stored as ratios so they stay correct.
++    Default (env unset / 1) preserves upstream behaviour.
++    """
++    import os as _os
++
+     h, w = tensor.shape[-2:]
++    try:
++        _ds = float(_os.environ.get("ARTIFIXER_ENHANCE_DOWNSCALE", "1") or "1")
++    except ValueError:
++        _ds = 1.0
++    if _ds and _ds > 1.0:
++        h = h / _ds
++        w = w / _ds
+     new_h = round(h / 16) * 16
+     new_w = round(w / 16) * 16
+-    if new_h != h or new_w != w:
++    orig_h, orig_w = tensor.shape[-2:]
++    if new_h != orig_h or new_w != orig_w:
+         return F.interpolate(tensor, (new_h, new_w), mode="bilinear")
+     return tensor
+ 
+diff --git a/model_training/pipeline/kv_cache_pipeline.py b/model_training/pipeline/kv_cache_pipeline.py
+index 70eaac2..9cae196 100644
+--- a/model_training/pipeline/kv_cache_pipeline.py
++++ b/model_training/pipeline/kv_cache_pipeline.py
+@@ -222,6 +222,21 @@ class ArtifixerKvCachePipeline(ArtifixerPipelineBase):
+             num_cache_frames = self.local_attn_size if self.local_attn_size != -1 else post_patch_num_frames
+ 
+         frame_seq_length = post_patch_height * post_patch_width
++        import os as _os
++        if _os.environ.get("ARTIFIXER_MEM_DEBUG", "0") in ("1", "true", "True"):
++            _alloc = torch.cuda.memory_allocated() / 1e9
++            _resv = torch.cuda.memory_reserved() / 1e9
++            _b = self.transformer.blocks[0]
++            _kv_each = batch_size * (frame_seq_length * num_cache_frames) * _b.attn1.heads * (_b.attn1.inner_dim // _b.attn1.heads) * 2
++            _kv_total = _kv_each * 2 * len(self.transformer.blocks) / 1e9
++            print(
++                "[ArtiFixer-MEM] before KV init: alloc=%.2fGB reserved=%.2fGB | "
++                "latent post-patch HxW=%dx%d frame_seq_len=%d num_cache_frames=%d "
++                "frames_per_block=%d blocks=%d -> KV(k+v all blocks)=%.2fGB"
++                % (_alloc, _resv, post_patch_height, post_patch_width, frame_seq_length,
++                   num_cache_frames, self.frames_per_block, len(self.transformer.blocks), _kv_total),
++                flush=True,
++            )
+         self._initialize_kv_cache(batch_size, frame_seq_length, num_cache_frames)
+         self._initialize_crossattn_cache("crossattn_cache")
+         self._initialize_crossattn_cache("neighbor_crossattn_cache")
+diff --git a/model_training/utils/train_utils.py b/model_training/utils/train_utils.py
+index 439704b..3fb5eb3 100644
+--- a/model_training/utils/train_utils.py
++++ b/model_training/utils/train_utils.py
+@@ -318,6 +318,39 @@ def _ensure_dcp_cache(model_id: str, dcp_cache_dir: Path) -> Path:
+     return cache_path
+ 
+ 
++def _maybe_enable_vae_tiling(vae):
++    """OOM mitigation (ArtiFixer-Ada): tile Wan VAE encode/decode on small GPUs.
++
++    Enabled via env ARTIFIXER_VAE_TILING=1. Tile sizes overridable via
++    ARTIFIXER_VAE_TILE_MIN (sample px, default 256) and
++    ARTIFIXER_VAE_TILE_STRIDE (sample px, default 192). Engages diffusers
++    AutoencoderKLWan.tiled_encode / tiled_decode when a frame dim exceeds
++    tile_sample_min_{height,width}; covers every rgb_to_latents / latents_to_rgb
++    site (frame encode, neighbor encode, final decode).
++    """
++    import os
++
++    if os.environ.get("ARTIFIXER_VAE_TILING", "0") not in ("1", "true", "True"):
++        return vae
++    tmin = int(os.environ.get("ARTIFIXER_VAE_TILE_MIN", "256"))
++    tstride = int(os.environ.get("ARTIFIXER_VAE_TILE_STRIDE", "192"))
++    if hasattr(vae, "enable_tiling"):
++        vae.enable_tiling(
++            tile_sample_min_height=tmin,
++            tile_sample_min_width=tmin,
++            tile_sample_stride_height=tstride,
++            tile_sample_stride_width=tstride,
++        )
++        print(
++            "[ArtiFixer-Ada] VAE tiling ENABLED (use_tiling=%s, min=%d, stride=%d)"
++            % (getattr(vae, "use_tiling", None), tmin, tstride),
++            flush=True,
++        )
++    else:
++        print("[ArtiFixer-Ada] WARNING: vae has no enable_tiling()", flush=True)
++    return vae
++
++
+ def get_pipe(
+     args: argparse.Namespace,
+     load_pretrained_transformer_weights: bool,
+@@ -336,6 +369,7 @@ def get_pipe(
+         transformer.load_state_dict(state_dict)
+ 
+     vae = AutoencoderKLWan.from_pretrained(args.model_id, subfolder="vae", torch_dtype=torch.bfloat16).to(device)
++    vae = _maybe_enable_vae_tiling(vae)
+ 
+     return ArtifixerPipeline(
+         vae=vae,
+@@ -353,6 +387,7 @@ def get_pipe(
+ 
+ def get_kv_cache_pipe(args: argparse.Namespace, device: torch.device | str) -> ArtifixerKvCachePipeline:
+     vae = AutoencoderKLWan.from_pretrained(args.model_id, subfolder="vae", torch_dtype=torch.bfloat16).to(device)
++    vae = _maybe_enable_vae_tiling(vae)
+ 
+     return ArtifixerKvCachePipeline(
+         vae=vae,
+diff --git a/thirdparty/3DGRUT-ArtiFixer b/thirdparty/3DGRUT-ArtiFixer
+--- a/thirdparty/3DGRUT-ArtiFixer
++++ b/thirdparty/3DGRUT-ArtiFixer
+@@ -1 +1 @@
+-Subproject commit 62e1038b74b2edc01440fd4ddf5f080109b6faba
++Subproject commit 62e1038b74b2edc01440fd4ddf5f080109b6faba-dirty
