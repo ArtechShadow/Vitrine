@@ -192,6 +192,23 @@ class DecomposeConfig:
     sam3_bpe_path: str = "/opt/sam3-repo/sam3/assets/bpe_simple_vocab_16e6.txt.gz"
     sam3_checkpoint_path: str = ""  # auto-detect from HF cache
 
+    # Open-vocabulary object discovery (object_discovery.py). When enabled, the
+    # segment stage first samples a spread of representative frames and asks a
+    # *pluggable vision overseer* to enumerate the distinct physical objects in
+    # the scene (open vocabulary). The discovered labels REPLACE the static
+    # ``sam3_concepts`` list for that run. Off by default so existing Stage 6
+    # behaviour (fixed concept list) is unchanged unless explicitly opted in.
+    #
+    # NOTE the default overseer is the ``claude_code`` agent path, because the
+    # local DiffusionGemma reasoner (agent_llm.py) is TEXT-ONLY and cannot read
+    # pixels (ADR-013). With no live vision overseer wired, discovery falls back
+    # to the static ``sam3_concepts`` and logs a WARN — it never blocks the run.
+    use_open_vocab_discovery: bool = False
+    discovery_overseer: str = "claude_code"   # claude_code (vision) | static
+    discovery_num_frames: int = 8             # representative frames to sample
+    discovery_min_confidence: float = 0.3     # drop discoveries below this
+    discovery_max_objects: int = 24           # cap concept-list size for SAM3
+
 
 @dataclass
 class MeshConfig:

@@ -1499,8 +1499,103 @@ class PipelineStages:
     # Stage 6: Segment (SAM2/SAM3)
     # ------------------------------------------------------------------
 
-    def segment(self, ply_path: str, frames_dir: str) -> StageResult:
+    def _resolve_segment_concepts(
+        self, frames_dir: str, *, discovery_callback=None,
+    ) -> tuple[list[str], list]:
+        """Resolve the SAM3 concept list for the segment stage.
+
+        Default path: the static ``sam3_concepts`` (back-compatible). When
+        ``decompose.use_open_vocab_discovery`` is on, first run a *pluggable
+        vision overseer* (object_discovery.py) over representative frames to
+        enumerate the objects actually present and use THOSE as concepts.
+
+        Returns ``(concepts, discoveries)`` where ``discoveries`` are the full
+        DiscoveredObject records (empty list when static). Never raises: any
+        discovery failure degrades to the static list so Stage 6 is unaffected.
+        """
+        decompose_cfg = self.config.decompose
+        static_concepts = decompose_cfg.sam3_concepts or decompose_cfg.descriptions or [
+            "paintings", "frames", "sculptures", "furniture",
+            "walls", "floor", "ceiling", "fixtures", "doorways",
+        ]
+        if not getattr(decompose_cfg, "use_open_vocab_discovery", False):
+            return static_concepts, []
+
+        try:
+            from pipeline import object_discovery as od
+
+            overseer = od.select_overseer(
+                getattr(decompose_cfg, "discovery_overseer", "static"),
+                callback=discovery_callback,
+            )
+            concepts, discoveries = od.discover_objects(
+                frames_dir,
+                overseer=overseer,
+                hint_concepts=static_concepts,
+                num_frames=getattr(decompose_cfg, "discovery_num_frames", 8),
+                min_confidence=getattr(decompose_cfg, "discovery_min_confidence", 0.3),
+                max_objects=getattr(decompose_cfg, "discovery_max_objects", 24),
+            )
+            return (concepts or static_concepts), discoveries
+        except Exception as exc:  # discovery is advisory — never block Stage 6
+            logger.warning("open-vocab discovery failed (%s) — using static concepts",
+                           exc)
+            return static_concepts, []
+
+    def _write_segment_v2g_metadata(self, objects, discoveries, masks_dir):
+        """Write v2g.object.1 records from segment-stage results (best-effort).
+
+        Merges the discovery proposals (label/confidence/description/aliases)
+        with the per-object SAM mask paths produced this stage and any sizes
+        already present in ``objects_fbx_scaled/object_meta.json``. Returns the
+        written JSON path, or ``None`` when there were no discoveries (static
+        path keeps the legacy behaviour and emits nothing new).
+        """
+        if not discoveries:
+            return None
+        try:
+            from pipeline import object_discovery as od
+
+            # Map mask paths by canonical label so build_object_records can join.
+            label_to_mask = {}
+            for obj in objects:
+                key = od.canonical_key(obj.get("label", ""))
+                mp = Path(masks_dir) / f"mask_{int(obj.get('object_id', 0)):04d}.npy"
+                if key and mp.exists():
+                    label_to_mask[key] = mp
+
+            arts = od.discover_run_artifacts(self.job_dir)
+            records = od.build_object_records(
+                discoveries,
+                sizes=arts.get("sizes"),
+                crops=arts.get("crops"),
+                masks=label_to_mask,
+                recons=arts.get("recons"),
+            )
+            out_path = self.job_dir / "objects_v2g.json"
+            frames = []
+            for d in discoveries:
+                frames.extend(getattr(d, "source_frames", []) or [])
+            return od.write_objects_v2g(
+                records, out_path,
+                source_frames=sorted(set(frames)),
+                overseer=getattr(self.config.decompose, "discovery_overseer",
+                                 "static"),
+            )
+        except Exception as exc:
+            logger.warning("v2g.object.1 metadata write failed (%s)", exc)
+            return None
+
+    def segment(self, ply_path: str, frames_dir: str,
+                discovery_callback=None) -> StageResult:
         """SAM2/SAM3 segmentation + mask projection.
+
+        ``discovery_callback`` (optional) is a vision-overseer callable
+        ``(frame_paths) -> list[{label, confidence, description, ...}]`` used for
+        open-vocab object discovery when ``decompose.use_open_vocab_discovery`` is
+        enabled. DiffusionGemma is text-only, so the overseer is supplied by the
+        orchestrator (the claude_code agent / web / MCP layer); absent a callback
+        discovery degrades to the static concept list.
 
         Returns: {objects: list[{label, object_id, mask_pixels}], masks_dir}
         """
@@ -1524,10 +1619,8 @@ class PipelineStages:
             )
 
         decompose_cfg = self.config.decompose
-        concepts = decompose_cfg.sam3_concepts or decompose_cfg.descriptions or [
-            "paintings", "frames", "sculptures", "furniture",
-            "walls", "floor", "ceiling", "fixtures", "doorways",
-        ]
+        concepts, discoveries = self._resolve_segment_concepts(
+            frames_dir, discovery_callback=discovery_callback)
 
         # Try SAM3 first
         if decompose_cfg.use_sam3:
@@ -1626,17 +1719,28 @@ class PipelineStages:
                 if not objects:
                     objects = [{"label": "full_scene", "count": -1}]
 
+                # Emit v2g.object.1 metadata when open-vocab discovery ran. This
+                # revives the rich per-object record (label/confidence/description
+                # + mask/crop paths) instead of the size-only object_meta.json.
+                v2g_path = self._write_segment_v2g_metadata(
+                    objects, discoveries, masks_dir)
+
+                artifacts = {
+                    "objects": json.dumps(objects),
+                    "masks_dir": str(masks_dir),
+                }
+                if v2g_path is not None:
+                    artifacts["objects_v2g"] = str(v2g_path)
+
                 return StageResult(
                     success=True, stage="segment",
                     metrics={
                         "object_count": len(objects),
                         "method": "sam3",
                         "concepts": concepts,
+                        "discovered": bool(discoveries),
                     },
-                    artifacts={
-                        "objects": json.dumps(objects),
-                        "masks_dir": str(masks_dir),
-                    },
+                    artifacts=artifacts,
                 )
             except Exception as exc:
                 if not decompose_cfg.sam3_fallback_to_sam2:

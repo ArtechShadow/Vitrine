@@ -1,0 +1,429 @@
+{
+  "schema": "v2g.object.1",
+  "overseer": "claude_code",
+  "object_count": 17,
+  "source_frames": [
+    "frame_00001.png",
+    "frame_00240.png",
+    "frame_00480.png",
+    "frame_00720.png",
+    "frame_00960.png",
+    "frame_01200.png",
+    "frame_01440.png",
+    "frame_01656.png"
+  ],
+  "objects": [
+    {
+      "id": "obj_001",
+      "label": "workbench",
+      "aliases": [
+        "plywood workbench",
+        "built-in bench",
+        "yellow-top bench"
+      ],
+      "confidence": 0.97,
+      "description": "Large built-in plywood workbench with a yellow laminate top and a rolling caster storage cube underneath; a second plywood bench carcass with arched hand-holds is under construction.",
+      "size_cm": null,
+      "footprint_cm": null,
+      "floor_position_cm": null,
+      "source_frames": [
+        "frame_00960.png",
+        "frame_01200.png",
+        "frame_01656.png"
+      ],
+      "mask_path": "output/dreamlab/sam3_masks/mask_0003.npy",
+      "crop_path": "output/dreamlab/obj_crops/workbench.png",
+      "recon_path": null,
+      "schema": "v2g.object.1"
+    },
+    {
+      "id": "obj_002",
+      "label": "step ladder",
+      "aliases": [
+        "ladder",
+        "aluminium step ladder",
+        "folding ladder"
+      ],
+      "confidence": 0.95,
+      "description": "Yellow/silver folding aluminium step ladder, leaned and folded against the wall in several frames.",
+      "size_cm": [
+        117.5,
+        96.8,
+        210.0
+      ],
+      "footprint_cm": [
+        117.5,
+        96.8
+      ],
+      "floor_position_cm": null,
+      "source_frames": [
+        "frame_00480.png",
+        "frame_01440.png",
+        "frame_01656.png"
+      ],
+      "mask_path": "output/dreamlab/sam3_masks/mask_0002.npy",
+      "crop_path": "output/dreamlab/obj_crops/ladder.png",
+      "recon_path": "output/dreamlab/objects_fbx_scaled/ladder.fbx",
+      "schema": "v2g.object.1"
+    },
+    {
+      "id": "obj_003",
+      "label": "wet and dry vacuum",
+      "aliases": [
+        "vacuum cleaner",
+        "Henry vacuum",
+        "Numatic vacuum",
+        "Karcher wet/dry vacuum",
+        "shop vac"
+      ],
+      "confidence": 0.94,
+      "description": "Cylinder wet/dry shop vacuum(s): a red/black Numatic-Henry style canister and a yellow/grey Karcher-style unit, with coiled hoses on the floor.",
+      "size_cm": [
+        115.0,
+        98.6,
+        28.0
+      ],
+      "footprint_cm": [
+        115.0,
+        98.6
+      ],
+      "floor_position_cm": null,
+      "source_frames": [
+        "frame_00001.png",
+        "frame_00720.png",
+        "frame_01440.png"
+      ],
+      "mask_path": "output/dreamlab/sam3_masks/mask_0001.npy",
+      "crop_path": "output/dreamlab/obj_crops/vacuum_cleaner.png",
+      "recon_path": "output/dreamlab/objects_fbx_scaled/vacuum_cleaner.fbx",
+      "schema": "v2g.object.1"
+    },
+    {
+      "id": "obj_004",
+      "label": "cordless stick vacuum",
+      "aliases": [
+        "stick vacuum",
+        "Shark vacuum",
+        "handheld vacuum"
+      ],
+      "confidence": 0.9,
+      "description": "Pink/magenta cordless upright stick vacuum (Shark-style) standing on the laminate floor by the doorway.",
+      "size_cm": null,
+      "footprint_cm": null,
+      "floor_position_cm": null,
+      "source_frames": [
+        "frame_00001.png"
+      ],
+      "mask_path": null,
+      "crop_path": null,
+      "recon_path": null,
+      "schema": "v2g.object.1"
+    },
+    {
+      "id": "obj_005",
+      "label": "stackable tool boxes",
+      "aliases": [
+        "toolbox",
+        "tool box tower",
+        "TSTAK boxes",
+        "Stanley FatMax stack",
+        "tool chest"
+      ],
+      "confidence": 0.93,
+      "description": "Tower of black-and-yellow stackable tool boxes (Stanley TSTAK / FatMax style) plus loose hard tool cases stacked against the wall.",
+      "size_cm": null,
+      "footprint_cm": null,
+      "floor_position_cm": null,
+      "source_frames": [
+        "frame_01200.png",
+        "frame_01656.png",
+        "frame_01440.png"
+      ],
+      "mask_path": "output/dreamlab/sam3_masks/mask_0006.npy",
+      "crop_path": "output/dreamlab/obj_crops/toolbox.png",
+      "recon_path": "output/dreamlab/output/hull_e2e/toolbox_hull.glb",
+      "schema": "v2g.object.1"
+    },
+    {
+      "id": "obj_006",
+      "label": "hard tool case",
+      "aliases": [
+        "tool case",
+        "power tool case",
+        "Makita case",
+        "black tool case"
+      ],
+      "confidence": 0.88,
+      "description": "Large black hard-shell plastic tool/power-tool carry cases (one Makita-blue) sitting on the floor.",
+      "size_cm": null,
+      "footprint_cm": null,
+      "floor_position_cm": null,
+      "source_frames": [
+        "frame_00480.png",
+        "frame_01200.png",
+        "frame_01656.png"
+      ],
+      "mask_path": null,
+      "crop_path": null,
+      "recon_path": null,
+      "schema": "v2g.object.1"
+    },
+    {
+      "id": "obj_007",
+      "label": "mitre saw",
+      "aliases": [
+        "mitre saw",
+        "chop saw",
+        "circular saw",
+        "DeWalt saw"
+      ],
+      "confidence": 0.8,
+      "description": "Power saw with a yellow (DeWalt-style) blade guard plus a track/guide-rail circular saw seen on the floor and the saw bench.",
+      "size_cm": null,
+      "footprint_cm": null,
+      "floor_position_cm": null,
+      "source_frames": [
+        "frame_00480.png",
+        "frame_00720.png",
+        "frame_01440.png"
+      ],
+      "mask_path": "output/dreamlab/sam3_masks/mask_0005.npy",
+      "crop_path": "output/dreamlab/obj_crops/mitre_saw.png",
+      "recon_path": null,
+      "schema": "v2g.object.1"
+    },
+    {
+      "id": "obj_008",
+      "label": "dartboard",
+      "aliases": [
+        "dart board"
+      ],
+      "confidence": 0.92,
+      "description": "Bristle dartboard mounted on the far wall, beside an oval green-baize games/poker table.",
+      "size_cm": [
+        45.0,
+        5.5,
+        20.8
+      ],
+      "footprint_cm": [
+        45.0,
+        5.5
+      ],
+      "floor_position_cm": null,
+      "source_frames": [
+        "frame_00001.png",
+        "frame_01440.png"
+      ],
+      "mask_path": "output/dreamlab/sam3_masks/mask_0008.npy",
+      "crop_path": "output/dreamlab/obj_crops/dartboard.png",
+      "recon_path": "output/dreamlab/objects_fbx_scaled/dartboard.fbx",
+      "schema": "v2g.object.1"
+    },
+    {
+      "id": "obj_009",
+      "label": "poker table",
+      "aliases": [
+        "games table",
+        "green baize table",
+        "card table"
+      ],
+      "confidence": 0.78,
+      "description": "Oval green-baize poker/games table leaned against the wall, partly wrapped in protective plastic.",
+      "size_cm": null,
+      "footprint_cm": null,
+      "floor_position_cm": null,
+      "source_frames": [
+        "frame_00001.png",
+        "frame_01440.png"
+      ],
+      "mask_path": null,
+      "crop_path": null,
+      "recon_path": null,
+      "schema": "v2g.object.1"
+    },
+    {
+      "id": "obj_010",
+      "label": "dining chair",
+      "aliases": [
+        "chair",
+        "kitchen chair",
+        "wooden chair"
+      ],
+      "confidence": 0.86,
+      "description": "Wooden dining/kitchen chair with a dark (black) seat pad, standing on the floor in the wide room shots.",
+      "size_cm": [
+        82.7,
+        95.0,
+        59.6
+      ],
+      "footprint_cm": [
+        82.7,
+        95.0
+      ],
+      "floor_position_cm": null,
+      "source_frames": [
+        "frame_01440.png"
+      ],
+      "mask_path": "output/dreamlab/sam3_masks/mask_0007.npy",
+      "crop_path": "output/dreamlab/obj_crops/chair.png",
+      "recon_path": "output/dreamlab/objects_fbx_scaled/chair.fbx",
+      "schema": "v2g.object.1"
+    },
+    {
+      "id": "obj_011",
+      "label": "trestle stand",
+      "aliases": [
+        "sawhorse",
+        "trestle",
+        "saw stand",
+        "trestle table"
+      ],
+      "confidence": 0.82,
+      "description": "Black metal folding trestle/sawhorse stands used to support work; blue trestles also visible against the wall.",
+      "size_cm": null,
+      "footprint_cm": null,
+      "floor_position_cm": null,
+      "source_frames": [
+        "frame_01440.png",
+        "frame_01656.png"
+      ],
+      "mask_path": null,
+      "crop_path": null,
+      "recon_path": null,
+      "schema": "v2g.object.1"
+    },
+    {
+      "id": "obj_012",
+      "label": "desk fan",
+      "aliases": [
+        "cooling fan",
+        "pedestal fan",
+        "fan"
+      ],
+      "confidence": 0.72,
+      "description": "Small white desk/cooling fan sitting on top of the tool box tower.",
+      "size_cm": null,
+      "footprint_cm": null,
+      "floor_position_cm": null,
+      "source_frames": [
+        "frame_01200.png"
+      ],
+      "mask_path": null,
+      "crop_path": null,
+      "recon_path": null,
+      "schema": "v2g.object.1"
+    },
+    {
+      "id": "obj_013",
+      "label": "plastic storage tote",
+      "aliases": [
+        "storage box",
+        "clear tote",
+        "Really Useful Box"
+      ],
+      "confidence": 0.8,
+      "description": "Clear plastic lidded storage totes/boxes on the floor holding screws and small parts.",
+      "size_cm": null,
+      "footprint_cm": null,
+      "floor_position_cm": null,
+      "source_frames": [
+        "frame_00720.png",
+        "frame_01656.png"
+      ],
+      "mask_path": null,
+      "crop_path": null,
+      "recon_path": null,
+      "schema": "v2g.object.1"
+    },
+    {
+      "id": "obj_014",
+      "label": "spirit level",
+      "aliases": [
+        "bubble level",
+        "level",
+        "yellow level"
+      ],
+      "confidence": 0.7,
+      "description": "Long yellow aluminium spirit (bubble) level lying on the workbench top.",
+      "size_cm": null,
+      "footprint_cm": null,
+      "floor_position_cm": null,
+      "source_frames": [
+        "frame_00960.png"
+      ],
+      "mask_path": null,
+      "crop_path": null,
+      "recon_path": null,
+      "schema": "v2g.object.1"
+    },
+    {
+      "id": "obj_015",
+      "label": "paint tins",
+      "aliases": [
+        "paint cans",
+        "paint pots",
+        "tins"
+      ],
+      "confidence": 0.68,
+      "description": "Round metal paint/varnish tins and pots scattered on the floor and bench.",
+      "size_cm": null,
+      "footprint_cm": null,
+      "floor_position_cm": null,
+      "source_frames": [
+        "frame_00240.png",
+        "frame_00480.png"
+      ],
+      "mask_path": null,
+      "crop_path": null,
+      "recon_path": null,
+      "schema": "v2g.object.1"
+    },
+    {
+      "id": "obj_016",
+      "label": "laminate flooring planks",
+      "aliases": [
+        "floor planks",
+        "laminate planks",
+        "wood flooring",
+        "engineered boards"
+      ],
+      "confidence": 0.9,
+      "description": "Stacks and scattered runs of wood-effect laminate/engineered floor planks being laid throughout the room (this is a flooring-install scene).",
+      "size_cm": null,
+      "footprint_cm": null,
+      "floor_position_cm": null,
+      "source_frames": [
+        "frame_00001.png",
+        "frame_00480.png",
+        "frame_00720.png"
+      ],
+      "mask_path": null,
+      "crop_path": null,
+      "recon_path": null,
+      "schema": "v2g.object.1"
+    },
+    {
+      "id": "obj_017",
+      "label": "interior door",
+      "aliases": [
+        "wooden door",
+        "door slab",
+        "oak door"
+      ],
+      "confidence": 0.85,
+      "description": "Oak-veneer interior door slabs \u2014 one hung in the frame, others stacked/leaning against the wall with their trim.",
+      "size_cm": null,
+      "footprint_cm": null,
+      "floor_position_cm": null,
+      "source_frames": [
+        "frame_00001.png",
+        "frame_00480.png",
+        "frame_01440.png"
+      ],
+      "mask_path": null,
+      "crop_path": null,
+      "recon_path": null,
+      "schema": "v2g.object.1"
+    }
+  ]
+}
