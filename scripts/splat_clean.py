@@ -14,6 +14,8 @@ inp, outp = sys.argv[1], sys.argv[2]
 op_th = float(sys.argv[3]) if len(sys.argv) > 3 else 0.10
 nb = int(sys.argv[4]) if len(sys.argv) > 4 else 20
 std = float(sys.argv[5]) if len(sys.argv) > 5 else 2.0
+scale_drop = float(sys.argv[6]) if len(sys.argv) > 6 else 0.0  # drop top-% largest-scale splats (floaters); 0=off
+aniso_max = float(sys.argv[7]) if len(sys.argv) > 7 else 0.0   # drop splats with axis-ratio above this; 0=off
 
 print(f"[read] {inp}", flush=True)
 ply = PlyData.read(inp)
@@ -25,6 +27,21 @@ op = 1.0 / (1.0 + np.exp(-np.asarray(data["opacity"], dtype=np.float64)))
 keep = op > op_th
 print(f"[opacity>{op_th}] {int(keep.sum()):,}/{n0:,}", flush=True)
 idx = np.where(keep)[0]
+
+# scale / anisotropy prune — long-axis "spiky" floaters that opacity alone misses
+# (the boundary streaks in the NanoGS splat render). Operates on stored log-scales.
+if (scale_drop > 0 or aniso_max > 0) and "scale_0" in data.dtype.names:
+    sc = np.stack([data["scale_0"], data["scale_1"], data["scale_2"]], axis=1)[idx].astype(np.float64)
+    max_log = sc.max(axis=1)
+    max_scale = np.exp(max_log)
+    aniso = np.exp(max_log - sc.min(axis=1))
+    keep2 = np.ones(len(idx), bool)
+    if scale_drop > 0:
+        keep2 &= max_scale <= np.percentile(max_scale, 100.0 - scale_drop)
+    if aniso_max > 0:
+        keep2 &= aniso <= aniso_max
+    idx = idx[keep2]
+    print(f"[scale-prune drop_top={scale_drop}% aniso<={aniso_max}] -> {len(idx):,}", flush=True)
 
 # spatial statistical-outlier removal on the surviving points (kills isolated floaters)
 xyz = np.stack([data["x"], data["y"], data["z"]], axis=1)[idx].astype(np.float64)
