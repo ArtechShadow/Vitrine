@@ -172,10 +172,10 @@ table is the live status.**
 | 4 | Deblur PRE-processing (NAFNet/Restormer) | ⬛ **rejected** | Per-frame generative restoration hallucinates → breaks multi-view consistency (the *faithful* kind is #B below). |
 | 5 | LichtFeld-native splat downstream | ✅ **in use** | `splat_30000.ply` is the splat-hero room feeding NanoGS = campaign step 3 done. |
 | 6 | Turnkey baseline (Postshot/Polycam) | ⬛ **researched** | Consensus path documented; we matched it — no need to run. |
-| 7 | **SAM3D-Objects** | 🟡 **STILL OPEN** | Staged, never run; purpose-built for cluttered/occluded objects — clearest remaining upside (objects aren't blur-limited). |
+| 7 | **SAM3D-Objects** | ✅ **TESTED → ADOPT as default object recon** | Beats TRELLIS on **3/4** dreamlab objects (chair/toolbox/table — watertight, no holes, better occlusion); TRELLIS retained for fine-detail cluttered cases (it keeps the mitre-saw blade SAM3D smooths away). See `docs/renders/dreamlab/sam3d_vs_trellis.png`. |
 
 ### Still genuinely under-explored (the real backlog, ranked by upside)
-- 🟡 **A. SAM3D-Objects** — cluttered/occluded object reconstruction (#7). **Highest upside** (objects have no blur ceiling).
+- ✅ **A. SAM3D-Objects** — DONE (highest-upside track delivered): **wins 3/4 vs TRELLIS** on dreamlab → adopt as the **default** object reconstructor (watertight geometry, occlusion completion); keep TRELLIS for fine-detail-critical objects. Revives the wilted agentic object track.
 - 🟡 **B. BAD-Gaussians / 3dgs-deblur** — *faithful* joint deblur-during-recon: the **only honest non-recapture lever** for the proven-blur-limited room (distinct from the rejected generative pre-deblur #4).
 - 🟡 **C. Object texture-refine** — StableGen-style FLUX.2/Qwen on mesh renders (both models staged).
 - 🟡 **D. VGGSfM front-end** + upstream **depth-supervised training** (`170ae4a0`) + **Densification (RoMa v2)** plugin — better poses/geometry/coverage from the *same* frames.
