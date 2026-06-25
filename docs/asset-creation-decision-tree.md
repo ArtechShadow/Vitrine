@@ -176,9 +176,9 @@ table is the live status.**
 
 ### Still genuinely under-explored (the real backlog, ranked by upside)
 - ✅ **A. SAM3D-Objects** — DONE (highest-upside track delivered): **wins 3/4 vs TRELLIS** on dreamlab → adopt as the **default** object reconstructor (watertight geometry, occlusion completion); keep TRELLIS for fine-detail-critical objects. Revives the wilted agentic object track.
-- 🟡 **B. BAD-Gaussians / 3dgs-deblur** — *faithful* joint deblur-during-recon: the **only honest non-recapture lever** for the proven-blur-limited room (distinct from the rejected generative pre-deblur #4).
+- ❌ **B. BAD-Gaussians / 3dgs-deblur** — TESTED → **DROP for dreamlab**. Trained 7000 iters; the deblurred render came out **20–30× *less* sharp** than the input. Wrong regime: the COLMAP-registered frames are *already sharp* (registration picked the crisp ones), so there's no per-exposure motion blur to invert — BAD-G's virtual-view averaging just softens. (Test also disk-confounded at downscale-8.) **Key insight: the room's limit is under-sampling/sparsity of the *registered* set, not pervasive blur — recapture, not deblur, is the lever.**
 - 🟡 **C. Object texture-refine** — StableGen-style FLUX.2/Qwen on mesh renders (both models staged).
-- 🟡 **D. VGGSfM front-end** + upstream **depth-supervised training** (`170ae4a0`) + **Densification (RoMa v2)** plugin — better poses/geometry/coverage from the *same* frames.
+- ❌ **D. VGGSfM** — TESTED → **DROP**. Registers the same frames as our COLMAP but at **3–6× looser reproj error** + needed blur-fallback PnP; our production ALIKED+LightGlue COLMAP is already strongest. Capture-limited, not front-end-limited. **Densification (RoMa v2) — SKIP**: densifies *sparse* init (gains only +0.19 dB, scene-dependent); dreamlab is already dense (0% under-observed) → near-zero value here. (Upstream depth-loss `170ae4a0` untried — lower priority.)
 - 🟡 **E. Blur-gate next layers** — optical-flow×shutter blur-magnitude, parallax-aware window spacing, Q-Align on survivors (the directional metric already shipped).
 
 ## Read of the tree (refreshed)
