@@ -94,7 +94,7 @@ flowchart TD
     LF -.->|"splat EXISTS task#21,<br/>never used downstream<br/>= campaign step 3"| SPLAT
 
     %% ===================== ENHANCE (optional) =====================
-    SPLAT --> AF["ArtiFixer enhance?<br/>GATED ADR-020 · fixes floaters<br/>NOT blur · likely ABANDON"]:::untested
+    SPLAT --> AF["ArtiFixer enhance?<br/>fixes floaters/holes NOT blur<br/>RUNS on 48GB Ada (OOM fixed)"]:::opt
 
     %% ===================== SCENE branch =====================
     SPLAT --> SCENE{Scene representation}:::keeper
@@ -241,7 +241,7 @@ This single move simultaneously resolves four standing problems:
 ### DROP / DEPRIORITISE
 - **CoMe / Open3D-TSDF as the *default* room representation** — meshing a room is hard-mode; keep mesh as an *optional* branch (and if used, 2DGS/PGSR not TSDF).
 - **Hand-rolled UE Remote-Control + LiDAR assembly** for the room (keep `ue_place_prescaled` only for *object* FBX placement).
-- **ArtiFixer** — **keep as a capture-conditional OPTION** (not abandoned; user: "everything on the table for different captures"). For *floater/hole/under-observed*-limited captures it helps; for *blur*-limited (dreamlab) it does not. Finish the dreamlab run for evidence that calibrates when to use it.
+- **ArtiFixer** — a **validated capture-conditional OPTION**. As of 2026-06-25 the 14B enhance **runs to completion on a single 48GB RTX 6000 Ada** (peak 45.5GB) — the "VAE OOM" was three walls (VAE-encode tiling, a 3DGRUT render leak, and a 28GB KV-cache where `--local_attn_size` is the dominant lever); fix captured at `docker/artifixer/patches/`. For *floater/hole/under-observed*-limited captures it helps; for *blur*-limited (dreamlab) it does not.
 - **Blind NAFNet/Restormer pre-deblur** — artifact risk > benefit.
 
 ### KEEP (validated, SOTA-aligned — do not churn)
