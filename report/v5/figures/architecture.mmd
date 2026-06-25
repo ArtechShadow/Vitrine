@@ -1,0 +1,36 @@
+graph TB
+  subgraph GPU0["GPU 0 (RTX 6000 Ada, 48 GB)"]
+    subgraph GT["gaussian-toolkit"]
+      FLASK["Flask UI :7860"]
+      MCP["LichtFeld MCP :45677"]
+      COLMAP["COLMAP 4.1.0 SfM<br/>GPU SIFT"]
+      PIPE["Pipeline (41 Python modules)<br/>stages: colmap, train,<br/>splat_optimize, segment,<br/>select_mesh_backend, assemble"]
+      BLENDER["Blender (Cycles GPU bake)<br/>vertex-color to texture: clean HULLS only"]
+      SPLATRENDER["gsplat splat render<br/>(captured-color path for SCENE scale)"]
+      SAM3["SAM3 segment"]
+      CC["Claude Code (ttyd :7681)<br/>orchestrates entire pipeline"]
+    end
+    subgraph CFY["vitrine-comfyui (:8200 to :8188)"]
+      COMFY["ComfyUI serial model lifecycle<br/>FLUX.2 / TRELLIS.2 / Hunyuan3D-2.1 / SAM3D"]
+    end
+  end
+
+  subgraph GPU1["GPU 1 (RTX 6000 Ada, 48 GB)"]
+    MILO["milo<br/>MILo radegs (SIGGRAPH 2025, GPU) + GaussianWrapping<br/>CUDA 11.8, Python 3.10"]
+    COME["come (gated INSTALL_COME=1; NOT running)<br/>CoMe (2026-04-22), CUDA 12.1, Python 3.10"]
+    UNREAL["unreal (overlay, optional, NOT started)<br/>UE 5.8 USD export + render"]
+  end
+
+  AGENTLLM["agent-llm (host :8084)<br/>DiffusionGemma 26B-A4B (Q8_0, text-only)"]
+
+  FLASK --> PIPE
+  MCP --> PIPE
+  PIPE -->|hull texture bake| BLENDER
+  PIPE -->|scene captured color| SPLATRENDER
+  PIPE --> SAM3
+  PIPE -->|http://vitrine-comfyui:8188| COMFY
+  PIPE -->|docker exec / shared /data/output| MILO
+  PIPE -->|docker exec / shared /data/output| COME
+  BLENDER -.->|textured USD / GLB| UNREAL
+  PIPE -.->|optional USD export| UNREAL
+  CC -->|OpenAI-compat /v1/chat/completions| AGENTLLM

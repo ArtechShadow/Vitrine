@@ -1,0 +1,316 @@
+% sec_technologies.tex — Vitrine v5: Technologies and Related Work
+% Capture-adaptive video→3D→UE 5.8 pipeline.
+% Included by the v5 master document.
+%
+% British English throughout.
+% All \cite{} keys are defined in report/v5/references.bib.
+
+\section{Technologies and Related Work}
+\label{sec:tech}
+
+Vitrine assembles a heterogeneous stack that spans classical Structure-from-Motion
+(SfM), neural radiance fields, volumetric 3D Gaussian representations, generative
+diffusion models, and real-time game-engine delivery.  This section surveys each
+component in pipeline order, placing Vitrine's choices in the context of the
+relevant literature and explaining the motivation for each decision.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Scene Reconstruction: from Radiance Fields to Gaussians}
+\label{sec:tech:recon}
+
+\paragraph{Neural Radiance Fields.}
+The modern era of photogrammetric reconstruction from uncontrolled video begins with
+\emph{NeRF} \cite{mildenhall2020_nerf}, which encodes a scene as a continuous
+volumetric function and synthesises novel views by differentiably integrating colour
+and density along camera rays.  NeRF established the benchmark for view-synthesis
+fidelity but requires minutes-to-hours of training per scene and cannot render in
+real time.  Mip-NeRF~360 \cite{barron2022_mipnerf360} extended the approach to
+unbounded outdoor scenes with anti-aliasing, but the fundamental throughput barrier
+remained.
+
+\paragraph{3D Gaussian Splatting.}
+Kerbl~et~al.\ \cite{kerbl2023_3dgs} replaced the implicit MLP with an explicit set
+of anisotropic 3D Gaussians, each carrying position, covariance, opacity, and
+spherical-harmonic colour coefficients.  Differentiable tile-based rasterisation
+renders the scene at real-time frame rates while achieving view-synthesis quality
+competitive with the best NeRF variants on standard benchmarks.  The explicit,
+editable representation and the absence of a ray-marching inner loop make 3DGS the
+natural foundation for a practical pipeline.  Vitrine uses the
+\emph{LichtFeld~Studio} \cite{lichtfeld2026} implementation, which adds
+ImprovedGS\texttt{+} densification heuristics and a native C\texttt{++}23/CUDA
+training loop exposed through a 70-tool MCP server.
+
+A key limitation of 3DGS for game-engine delivery is its incompatibility with
+standard rasterisation pipelines: Gaussians cannot be imported directly as
+collision-ready meshes or LOD assets.  NanoGS \cite{nanogs2026}, released in March
+2026, demonstrated a Nanite-inspired plugin for Unreal Engine~5 that applies
+hierarchical LOD clustering and GPU-accelerated depth sorting to render splat point
+clouds inside UE5 at interactive rates.  Vitrine uses NanoGS as an optional
+``splat-in-UE'' path for scene preview, while polygonal meshes remain the primary
+game-asset deliverable.
+
+\paragraph{Structure from Motion and Feature Matching.}
+Camera pose estimation is the prerequisite for all downstream reconstruction.
+Vitrine uses COLMAP~\cite{schoenberger2016sfm, schoenberger2016mvs}, the de-facto
+open-source SfM framework, for sparse reconstruction and multi-view stereo.  COLMAP
+was historically paired with SIFT~\cite{lowe2004_sift} features; Vitrine replaces
+SIFT with \emph{ALIKED}~\cite{zhao2023_aliked}, a lighter keypoint and descriptor
+extractor built on a sparse deformable descriptor head that matches dense features
+at a fraction of the memory cost.  Correspondence is established with
+\emph{LightGlue}~\cite{lindenberger2023_lightglue}, an adaptive Graph Neural
+Network matcher that prunes the attention graph based on estimated match difficulty,
+achieving SuperGlue-level accuracy at substantially lower latency.  Together,
+ALIKED+LightGlue represent the current state of the art in efficient
+sparse matching and have been shown to improve downstream 3DGS quality on
+challenging indoor captures.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Surface Meshing}
+\label{sec:tech:meshing}
+
+Gaussian splatting does not produce a mesh natively.  Vitrine requires polygonal
+geometry for Unreal Engine collision, Nanite virtualisation, and UV-baked texture
+export.  Several approaches have been proposed to bridge the gap.
+
+\paragraph{Geometry-regularised Gaussian variants.}
+\emph{SuGaR}~\cite{guedon2024_sugar} (Surface-aligned Gaussian splatting) adds a
+regularisation term that encourages Gaussians to align with the scene surface,
+enabling Poisson mesh extraction.  \emph{2DGS}~\cite{huang2024_2dgs} collapses 3D
+Gaussians onto 2D oriented planar disks, recovering surface normals analytically and
+facilitating TSDF-style marching-cubes extraction.  \emph{PGSR}~\cite{chen2024_pgsr}
+(Planar-based Gaussian Splatting) pursues a similar idea in the TVCG setting,
+representing local geometry via planar primitives regularised for planarity
+consistency.  \emph{GOF}~\cite{yu2024_gof} (Gaussian Opacity Fields) derives a
+volumetric opacity field from a ray-tracing formulation of Gaussian rendering,
+enabling direct level-set mesh extraction via marching tetrahedra without Poisson
+post-processing.
+
+\paragraph{Post-hoc mesh extraction.}
+\emph{MILo}~\cite{guedon2025_milo} (Mesh-In-the-Loop Gaussian Splatting) takes a
+fundamentally different approach: it extracts a differentiable mesh at \emph{every
+training iteration} and back-propagates mesh gradients into the Gaussian parameters,
+enforcing bidirectional consistency between the volumetric and surface
+representations.  Published as a SIGGRAPH Asia 2025 journal track paper (ACM TOG),
+MILo produces the finest geometric detail of any extraction method tested on
+Vitrine's captures and is used as the \emph{primary object-mesh backend}.
+
+\emph{CoMe}~\cite{radl2026_come} (Confidence-based Mesh extraction) assigns a
+learnable confidence value to each Gaussian, using it to balance photometric and
+geometric supervision.  CoMe avoids the need for multi-view normal networks or
+iterative extraction and runs substantially faster than MILo.  It serves as
+Vitrine's \emph{primary scene-environment mesh backend}, with a TSDF fallback
+(below) for scenes where CoMe confidence fails to converge.
+
+\paragraph{TSDF fallback.}
+Truncated Signed Distance Function fusion~\cite{curless1996_tsdf} with marching
+cubes~\cite{lorensen1987_marching} integrated via \emph{Open3D}~\cite{zhou2018_open3d}
+provides a geometry-agnostic fallback.  The \texttt{ScalableTSDFVolume} pipeline
+integrates depth images rendered from the trained splat, producing watertight meshes
+even for wide-baseline captures where Gaussian regularisation fails.  Vitrine uses
+the legacy \texttt{ScalableTSDFVolume} path (rather than the newer VoxelBlockGrid)
+for stability on large scenes.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Per-Object Reconstruction}
+\label{sec:tech:objects}
+
+Reconstructing individual objects to game-asset quality from a room-scale scan
+requires segmentation, generalised-prior 3D generation, and texture synthesis.
+
+\paragraph{Instance segmentation.}
+Vitrine uses the \emph{Segment Anything Model}~(SAM)~\cite{kirillov2023_sam} and
+its video-capable successor \emph{SAM~2}~\cite{ravi2024_sam2} for per-frame mask
+propagation across the capture sequence.  SAM's promptable, class-agnostic
+segmentation enables instance crops without domain-specific training.  The
+\emph{SAM-3D~Objects} library~\cite{sam3dobjects2025} lifts SAM masks into 3D using
+the reconstructed point cloud, providing per-object bounding volumes and concept
+labels that drive downstream hull reconstruction.
+
+\paragraph{Image-to-3D generation (primary path).}
+\emph{TRELLIS.2}~\cite{xiang2025_trellis2} is the designated primary hull backend.
+Developed at Tsinghua University and Microsoft Research and released under the MIT
+Licence, TRELLIS.2 introduces O-Voxel (Omni-Voxel), a field-free sparse voxel
+representation that encodes both geometry and physically-based rendering (PBR)
+material attributes.  A 4B-parameter flow-matching model trained on diverse 3D asset
+datasets generates fully textured meshes (base colour, metallic, roughness, opacity)
+in 17--60\,s per object on an RTX~6000~Ada, and accepts up to 16 multi-view inputs,
+directly consuming the image crops Vitrine provides.  It builds on the original
+\emph{TRELLIS}~\cite{xiang2024_trellis} (CVPR~2025 Spotlight), which introduced the
+SLAT (Structured Latent) representation for unified Gaussian/mesh/radiance-field
+decoding.
+
+\paragraph{Image-to-3D generation (secondary / hero-asset path).}
+\emph{Hunyuan3D~2.0}~\cite{zhao2025_hunyuan3d20} and
+\emph{Hunyuan3D~2.1}~\cite{hunyuan2025_21} from Tencent provide the highest
+open-weight texture fidelity (up to 8K PBR), at the cost of higher latency
+($\approx$139\,s per object).  The system comprises a shape-generation diffusion
+transformer (Hunyuan3D-DiT) and a texture-synthesis model (Hunyuan3D-Paint),
+separately invocable as ComfyUI nodes.  Vitrine uses Hunyuan3D-2.1 as the
+secondary/hero-asset backend, activating it when an object is designated a focal
+point of the scene.
+
+\paragraph{Inpainting and view completion.}
+Real captures invariably include occluded object faces that neither TRELLIS.2 nor
+Hunyuan3D can hallucinate from the available views.  Vitrine uses two complementary
+models.  \emph{FLUX.2-dev}~\cite{flux2025} (Black Forest Labs) is a 24B-parameter
+rectified-flow transformer with a Mistral-3 text encoder, providing the strongest
+available long-form prompt fidelity for rich appearance description.
+\emph{Qwen-Image-Edit}~\cite{qwenvl2025} (Alibaba) is an instruction-following
+visual-language model that uniquely supports instruction-driven view rotation, making
+it the preferred recovery model for occluded-face completion and the only
+commercially-licensed option in the stack.
+
+\paragraph{View-generation conditioning.}
+\emph{MV-Adapter}~\cite{mvadapter2024} (Apache-2.0) generates camera-conditioned
+orbit sheets via ControlNet-compatible 6-view SDXL conditioning.  It provides a
+lightweight, commercially-licensed alternative to non-commercial orbital-video
+models for explicit camera-parametrised multi-view synthesis.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Reconstruction Enhancement: ArtiFixer}
+\label{sec:tech:artifixer}
+
+Even a dense splat contains structurally unobserved regions --- surfaces the camera
+never approached --- where 3DGS places floaters, ghosts, or holes.  These defects
+propagate into the downstream mesh and UE asset.
+\emph{ArtiFixer}~\cite{delutio2026_artifixer}, from the NVIDIA Spatial Intelligence
+Lab and presented at SIGGRAPH~2026, is an auto-regressive video-diffusion refiner
+built on \emph{Wan2.1-T2V-14B}~\cite{wan2025}.  Its opacity-mixing trick
+($z_{\mathrm{mix}} = O_z \cdot z_{\mathrm{deg}} + (1-O_z) \cdot \varepsilon$)
+leaves observed pixels ($O_z \approx 1$) faithful to the input, while generating
+freely in unobserved regions ($O_z \approx 0$) using a strong video-diffusion prior.
+The \emph{ArtiFixer3D} variant distils the generated views back into an explicit
+3DGRUT~\cite{wu2025_3dgut} Gaussian recon --- a cleaner splat whose downstream mesh
+is measurably less noisy than the raw LichtFeld output on coverage-limited captures.
+
+Vitrine forks ArtiFixer to run on RTX~6000~Ada (\texttt{sm\_89}) by replacing the
+FlashAttention-3/4 build block with cuDNN SDPA, with no application-code changes
+(ADR-020; see \S\ref{sec:method:overview}).  The enhanced recon branch is
+\emph{optional and per-scene gated}: it activates only when a quality classifier
+predicts coverage-limited rather than blur-limited failure, because ArtiFixer does
+not deblur --- it stays faithful ($O_z \approx 1$) in observed-but-blurry regions.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Capture Quality and Frame Selection}
+\label{sec:tech:quality}
+
+The dominant quality bottleneck in real-world captures is motion blur, not
+reconstruction arithmetic.  Vitrine addresses this at the frame-selection stage
+before any 3D optimisation begins.
+
+\paragraph{No-reference image quality.}
+\emph{MUSIQ}~\cite{ke2021_musiq} (Multi-scale Image Quality Transformer) is a
+patch-based transformer that processes full-size images at their native resolution,
+using a hash-based 2D spatial embedding and scale embedding to capture image quality
+at multiple granularities without fixed-size preprocessing distortion.  Trained on
+PaQ-2-PiQ, KonIQ-10k, and SPAQ, MUSIQ achieves state-of-the-art no-reference image
+quality assessment (NR-IQA) and is used as Vitrine's per-frame quality gate.
+\emph{Q-Align}~\cite{wang2023_qalign} provides an LMM-based alternative that
+emulates discrete human rating levels; it is evaluated as a higher-cost option
+for batch scoring.  Both are accessed through \emph{pyiqa}~\cite{chen2022_pyiqa},
+an open-source PyTorch IQA toolbox.
+
+\paragraph{Focus and sharpness.}
+Low-level sharpness is measured with the variance-of-Laplacian operator, a classical
+focus measure that computes the variance of the Laplacian-filtered image; high
+variance corresponds to sharp edges.  Pertuz~et~al.\ \cite{pertuz2013_focus}
+provide a comprehensive survey and comparison of such operators.  The
+full-resolution variant (applied on the full 4K frame rather than a downsampled
+proxy) is used, as Vitrine's capture experiments showed that downsampling to 960p
+compresses the dynamic range of the sharpness score by a factor of~105, masking
+meaningful differences between frames.
+
+\paragraph{Deblur-aware Gaussian training.}
+When the frame-quality gate accepts footage that is mildly blurry rather than
+sharply filtered, \emph{BAD-Gaussians}~\cite{zhao2024_badgaussians} (Bundle
+Adjusted Deblur Gaussian Splatting, ECCV~2024) provides a training-time deblur
+path.  BAD-Gaussians models the camera trajectory during exposure as a sequence of
+virtual sharp cameras, blending their renders to simulate blur formation, and
+jointly optimises the trajectory and the Gaussian parameters.  This yields both a
+deblurred splat and corrected camera poses.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Texture Baking and Mesh Post-processing}
+\label{sec:tech:texture}
+
+Once a mesh is available from CoMe, MILo, or TSDF, Vitrine prepares it for
+game-engine import.
+
+\paragraph{UV atlas generation.}
+Vitrine uses \emph{xatlas}~\cite{xatlas2018} for automatic UV atlas generation.
+xatlas is a lightweight C\texttt{++}11 mesh-parameterisation library derived from
+Thekla Atlas that segments meshes into charts, parameterises each chart, and packs
+them into one or more non-overlapping atlases suitable for texture baking and
+lightmap generation.
+
+\paragraph{Texture baking.}
+Vertex colours from the trained Gaussian splat are baked into UV-parametrised
+textures using Blender's~\cite{blender2024} Cycles GPU renderer via the
+\texttt{texture\_baker.bake\_from\_vertex\_colors} pipeline with \texttt{smooth=0}
+(MeshCleaner smoothing disabled to preserve sharp architectural edges).  The output
+is an FBX file with baked albedo textures, imported into Unreal Engine~5.8 as a
+Nanite-enabled game asset.
+
+\paragraph{Mesh cleaner.}
+Raw CoMe and TSDF meshes contain stray bridging triangles, sub-threshold connected
+components, and degenerate faces.  The \texttt{mesh\_cleaner} module applies
+edge-length filtering followed by connected-component analysis (retaining only the
+largest $k$ components) to reduce the mesh to a clean, watertight shell at TSDF
+parity.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Unreal Engine 5.8 Delivery}
+\label{sec:tech:ue}
+
+The game-engine delivery target is \emph{Unreal Engine~5.8}~\cite{epicgames2024_ue5},
+Epic Games' production-grade real-time renderer.  Vitrine imports polygonal FBX
+assets as Nanite-enabled static meshes with baked-texture materials.  The scene is
+assembled via a Python control bridge over UE's Web Remote Control API
+(\texttt{:30010}) and the experimental first-party UE MCP server (\texttt{:8000}).
+An optional NanoGS~\cite{nanogs2026} splat layer provides a volumetric preview
+alongside the polygonal assets, using Nanite-inspired LOD clustering to maintain
+interactive frame rates.
+
+The UE overlay runs inside a Docker container whose base image is
+\texttt{nvidia/cuda:12.8.1-runtime-ubuntu22.04}, with the UE~5.8 Linux installed
+build bind-mounted read-only from the host repository.  No Epic GitHub or
+\texttt{ghcr.io} registry access is required.
+
+\paragraph{USD (archival only).}
+Universal Scene Description~\cite{pixar2019_usd} is used solely for archival export
+and inter-tool exchange within the pipeline.  It is \emph{not} the UE deliverable:
+UE's USD~Stage~Actor imports the live USDA and preserves Vitrine's \texttt{v2g:*}
+custom metadata lineage tags via the \texttt{pxr} Python library, but LichtFeld's
+native USD export emits a \texttt{ParticleField} prim that UE cannot import as
+collision-ready geometry (ADR-019).
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Summary of Component Choices}
+\label{sec:tech:summary}
+
+Table~\ref{tab:tech_summary} maps each pipeline stage to the primary technology,
+the fallback, and the key decision rationale.
+
+\begin{table}[h]
+\centering
+\caption{Summary of technology choices by pipeline stage.}
+\label{tab:tech_summary}
+\begin{tabular}{llll}
+\toprule
+\textbf{Stage} & \textbf{Primary} & \textbf{Fallback} & \textbf{Key driver} \\
+\midrule
+Feature matching   & ALIKED + LightGlue \cite{zhao2023_aliked,lindenberger2023_lightglue}   & SIFT + SuperGlue         & Speed + accuracy \\
+SfM                & COLMAP \cite{schoenberger2016sfm}                                        & ---                      & Established baseline \\
+3DGS training      & LichtFeld Studio \cite{lichtfeld2026}                                    & gsplat                   & MCP control surface \\
+Recon enhancement  & ArtiFixer3D \cite{delutio2026_artifixer}                                 & Difix3D\texttt{+}        & Coverage-limited scenes \\
+Scene mesh         & CoMe \cite{radl2026_come}                                                & TSDF / Open3D \cite{zhou2018_open3d}  & Confidence-guided accuracy \\
+Object mesh        & MILo \cite{guedon2025_milo}                                              & SuGaR \cite{guedon2024_sugar}         & In-the-loop detail \\
+Object hull gen    & TRELLIS.2 \cite{xiang2025_trellis2}                                      & Hunyuan3D-2.1 \cite{hunyuan2025_21}   & MIT licence + PBR \\
+Segmentation       & SAM / SAM~2 \cite{kirillov2023_sam,ravi2024_sam2}                        & ---                      & Promptable, class-agnostic \\
+Frame QA           & MUSIQ \cite{ke2021_musiq}                                                 & Q-Align \cite{wang2023_qalign}        & NR-IQA speed \\
+UV atlas           & xatlas \cite{xatlas2018}                                                 & ---                      & No dependencies \\
+Deblur training    & BAD-Gaussians \cite{zhao2024_badgaussians}                               & ---                      & Bundle-adjusted exposure \\
+Game delivery      & UE~5.8 + FBX \cite{epicgames2024_ue5}                                    & NanoGS splat \cite{nanogs2026}        & Nanite + collision \\
+\bottomrule
+\end{tabular}
+\end{table}

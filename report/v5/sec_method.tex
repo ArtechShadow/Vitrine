@@ -1,0 +1,317 @@
+% sec_method.tex — Vitrine v5: Method
+% Capture-adaptive video→3D→UE 5.8 pipeline.
+% Companion to sec_results.tex. Included by the v5 master document.
+%
+% Cite keys: from report/references.bib + v5 additions noted in-text.
+% Figure labels: \ref{fig:router}, \ref{fig:nanogs_room}, \ref{fig:scene_integrated},
+%                \ref{fig:mesh_comparison}, \ref{fig:frame_gate}.
+% British English throughout.
+
+\section{Overview: the Capture-Adaptive Thesis}
+\label{sec:method:overview}
+
+The fundamental claim of Vitrine is that \emph{there is no single best reconstruction
+pipeline for real-world video}.  Real captures fail in qualitatively different ways ---
+motion blur, insufficient coverage, missing depth sensing, hardware constraints --- and
+any single fixed recipe will be sub-optimal for most of them.  Vitrine therefore does not
+select one pipeline at design time.  Instead, every incoming capture is \emph{diagnosed}
+first, and a \emph{router} selects the configuration whose components best address the
+diagnosed bottleneck.  The best path is a function of the data, not the system.
+
+Figure~\ref{fig:router} illustrates the full router as a flowchart.  Four orthogonal
+axes of the capture profile drive the routing decision: (i)~\textbf{sharpness} --- is
+motion blur the dominant defect, or is the footage sharp?; (ii)~\textbf{coverage} ---
+are under-observed regions (floaters, holes) the dominant defect, or is the splat dense?;
+(iii)~\textbf{capture hardware} --- RGB-only, or does a depth sensor or event camera
+complement the video?; and (iv)~\textbf{deliverable} --- is a splat room representation
+sufficient, or does the project mandate a polygonal mesh for game-engine collision and
+LOD?  The four axes are independent; the router evaluates each and assembles the
+appropriate combination of components from the validated menu described in the sections
+below.
+
+Critically, the polygonal-mesh mandate can be \emph{decoupled} from the room
+representation.  The TRELLIS.2 objects (Section~\ref{sec:method:objects}) are polygonal
+meshes (GLB$\rightarrow$FBX) in every viable option; a splat room with polygonal objects
+embedded in Unreal Engine~5.8 therefore satisfies the mandate without requiring the room
+itself to be meshed.  This decoupling is the key architectural insight that resolves the
+conflict between mesh-fidelity requirements and the empirical finding that meshing a
+blur-limited room produces output that is not appreciably better than the splat it was
+derived from (Section~\ref{sec:results:mesh}).
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Stage 1: Ingest and Frame-Quality Gate}
+\label{sec:method:ingest}
+
+\subsection{Frame extraction}
+Video is decoded with PyAV at the native frame rate and stored as lossless PNG to preserve
+sub-pixel feature information.  An integrity manifest is written per-capture: each frame
+entry carries its source index, full-resolution Laplacian-variance sharpness score, and a
+SHA-256 hash of the pixel data; the source video is itself hashed so that any silent
+re-extraction can be detected.  The same canonical frame set feeds structure-from-motion
+(SfM), Gaussian training, and metrics, ensuring camera-to-image correspondence is
+consistent throughout the pipeline.
+
+\subsection{Neural image-quality gate (MUSIQ)}
+After extraction, \texttt{frame\_quality.py} scores every frame with the
+\textbf{MUSIQ}~\cite{ke2021_musiq} no-reference image-quality assessment model, executed
+via \texttt{pyiqa}~\cite{chen2022_pyiqa} on the GPU (classical Laplacian-variance fallback
+when the GPU is unavailable).  MUSIQ is perceptually calibrated: on the KonIQ-10k scale
+(0--100, higher is better) a photographic still scores 50--75; frames in the teens are
+unusably soft.  The gate applies a \emph{drop-and-flag policy}: a video that cannot
+supply \texttt{min\_good\_frames} KEEP-grade frames is flagged \texttt{too\_low\_quality}
+and skipped so that the orchestrator moves to the next video rather than feeding low-grade
+footage into SfM and 3DGS training.  Accepted videos return a \emph{windowed best-of}
+selection --- the sharpest frame per overlapping temporal window --- which simultaneously
+maximises quality and preserves coverage across the duration of the capture.
+
+\subsection{Directional sharpness gate for motion blur}
+\label{sec:method:directional}
+The dreamlab reference capture (Section~\ref{sec:results:overall}) revealed a limitation
+of scalar Laplacian variance as a blur metric.  At 4K resolution, the per-frame Laplacian
+range spans approximately 105$\times$ between the sharpest and blurriest frames, but
+down-scaling to even 960p before computing the Laplacian collapses this range to
+$\approx$1.6$\times$, making blurry frames appear indistinguishable from sharp ones.
+All sharpness assessment is therefore performed at full or near-full resolution.
+
+More fundamentally, scalar Laplacian variance measures the \emph{magnitude} of the second
+derivative without regard to spatial orientation.  Uniform motion blur, however, produces
+a characteristically \emph{directional} attenuation: edges aligned with the blur direction
+lose contrast severely while edges orthogonal to it are less affected.  The upgraded gate
+additionally computes the \textbf{structure-tensor minor eigenvalue} $\lambda_2$ for each
+frame, which quantifies the degree of isotropic contrast in the gradient field.  A
+high-quality frame has abundant gradients in all directions ($\lambda_2$ is large);
+a motion-blurred frame has gradients predominantly in one direction ($\lambda_2 \approx
+0$).  The gate issues a \textbf{recapture flag} when the population distribution of
+$\lambda_2$ across a video is skewed towards near-zero values, signalling that the blur is
+systematic rather than isolated to a minority of frames.  Four unit tests validate the
+metric against synthetic images with known blur direction and magnitude.
+
+Measurement on the dreamlab capture confirms both metrics agree that the footage is
+blur-limited; $\lambda_2$ additionally identifies the dominant blur direction as
+translational (horizontal sweeping motion), consistent with the handheld capture
+trajectory.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Stage 2: Structure from Motion}
+\label{sec:method:sfm}
+
+Camera poses are estimated with \textbf{COLMAP}~\cite{schoenberger2016sfm} version 4.1.0.
+Feature extraction uses GPU SIFT (the COLMAP 4.1.0 namespace changed to
+\texttt{--FeatureExtraction.*}); ALIKED+LightGlue~\cite{lindenberger2023_lightglue} is the
+intended SOTA matcher and is wired into the pipeline configuration, though the current
+deployment falls back to GPU SIFT because the ALIKED enum is invalid in the COLMAP 4.1.0
+build and the LightGlue extension requires \texttt{libcudnn.so.9} (absent from the
+container image).  GPU SIFT gave 600/600 frames registered on the dreamlab capture (mean
+re-projection error 1.03~px), so the matcher limitation is not the binding constraint on
+the current reference run.
+
+For multi-sweep captures where the same space is filmed at multiple heights in separate
+passes, all sweeps are ingested together and COLMAP registers them as one unified model.
+The multi-sweep strategy demonstrably raises point-cloud density: on a three-sweep
+combined capture, COLMAP produced $\sim$146k points at $\sim$95\% registration, versus
+$\sim$90k points for a single sweep of the same room.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Stage 3: 3D Gaussian Splatting Training}
+\label{sec:method:3dgs}
+
+\subsection{The 3DGS representation}
+3D Gaussian Splatting~\cite{kerbl2023_3dgs} represents a scene as a set of anisotropic
+3D Gaussians, each parameterised by a position $\boldsymbol{\mu} \in \mathbb{R}^3$, a
+covariance matrix $\boldsymbol{\Sigma}$ (decomposed as scale $\mathbf{s}$ and rotation
+quaternion $\mathbf{q}$), an opacity $\alpha$, and view-dependent colour encoded in
+spherical-harmonic coefficients.  Rasterisation sorts Gaussians by depth and
+alpha-composites them into the image, yielding real-time rendering rates after training.
+
+\subsection{LichtFeld native trainer}
+Vitrine vendors \textbf{LichtFeld Studio}~\cite{lichtfeld2026} (v0.5.2,
+C++23/CUDA, MIT licence) as a pinned tool --- a git submodule at
+\texttt{vendor/lichtfeld-studio} --- for native 3DGS training and its local MCP control
+surface (70+ tools; HTTP endpoint \texttt{:45677}).  The vendored tool is never modified;
+updates are applied by bumping the submodule tag.
+
+Training uses the \textbf{ImprovedGS+} (\texttt{igs+}) strategy with the MRNF
+densification schedule and \textbf{appearance conditioning} (\texttt{--ppisp},
+per-camera photo-image signal processing) for correcting per-frame exposure drift.  The
+splat is trained \emph{unpruned}: opacity-sparsity regularisation is deliberately
+disabled to preserve fidelity for downstream mesh extraction and visual inspection.
+Performance in the game engine is handled separately via Nanite (polygonal assets) and
+the NanoGS plugin (splat rendering), so the training budget is not constrained by
+real-time rendering.  Training to 30,000 iterations produces the canonical
+\texttt{splat\_30000.ply} used downstream.  On the dreamlab capture, 2.48M Gaussians were
+trained; a floater-prune pass (SuperSplat) reduced this to 1.55M before UE ingest.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Stage 4: Scene Representation}
+\label{sec:method:scene}
+
+The router selects one of three scene representations depending on the capture profile and
+deliverable requirement (Figure~\ref{fig:router}, ``Room deliverable?'' gate).
+
+\subsection{Scene as splat: LichtFeld .ply → SuperSplat → NanoGS}
+\label{sec:method:scene:splat}
+The primary spine for the dreamlab capture --- and the recommended default for any
+blur-limited or coverage-dense RGB capture --- is to \textbf{preserve the splat as the
+room representation} and render it as real Gaussians in UE~5.8 via the
+\textbf{NanoGS}~\cite{nanogs2026} plugin.
+
+The process is: (i)~export the LichtFeld-trained \texttt{splat\_30000.ply}; (ii)~clean
+floaters and crop the field boundary in \textbf{SuperSplat}\footnote{SuperSplat, PlayCanvas, MIT licence. \url{https://github.com/playcanvas/supersplat}} (MIT);
+(iii)~import into UE~5.8 via the NanoGS plugin, which was recompiled for UE~5.8 from its
+UE~5.6/5.7 codebase.  NanoGS renders real Gaussians via a Nanite-style LOD pipeline,
+replacing the LiDAR-point-cloud workaround used prior to this work.  The full dreamlab
+scene (pruned splat room + chair, vacuum cleaner, and toolbox FBXs) stands in the editor
+and renders correctly (Figure~\ref{fig:nanogs_room}, Figure~\ref{fig:scene_integrated}).
+
+This approach has four properties that make it the preferred path: it uses the
+LichtFeld-native trainer output directly (lean-on-vendor principle); it delivers the
+highest fidelity available from the captured data without the lossy geometry-extraction
+step; it eliminates the flaky UE Remote-Control assembly scripting used in earlier
+versions; and it satisfies the polygonal-mesh mandate through the object FBXs rather than
+requiring the room to be meshed.
+
+\subsection{Scene as mesh: 2DGS / PGSR / TSDF → FBX (Nanite)}
+\label{sec:method:scene:mesh}
+When a polygonal room mesh is explicitly required --- for collision volumes, physics
+simulation, or a deliverable format that cannot accommodate a splat plugin --- the router
+selects the mesh branch.
+
+\textbf{2D Gaussian Splatting}~\cite{huang2024_2dgs} (\textbf{2DGS}) trains
+planar surfels rather than 3D ellipsoids; the surfel depth maps are geometrically cleaner
+than ellipsoid-depth (which smears across surface boundaries) and produce improved TSDF
+fusion input.  \textbf{PGSR}~\cite{chen2024_pgsr} uses planar Gaussians with multi-view
+consistency constraints and an explicit textureless-wall prior, making it well-suited to
+indoor environments with large featureless surfaces.  Both are kept in the toolkit for
+sharp captures; their benefit is empirically absent on the blur-limited dreamlab data
+(Section~\ref{sec:results:mesh}).
+
+The TSDF fallback (\texttt{gsplat}-to-\texttt{ScalableTSDFVolume}) is stable for all
+capture qualities and remains the default mesh backend.  The Open3D tensor-API
+\texttt{VoxelBlockGrid} extractor was evaluated and found to abort with an integer
+overflow at scale (an Open3D~0.19 bug); the legacy CPU \texttt{ScalableTSDFVolume} path
+is the validated alternative.
+
+Irrespective of the extraction method, the mesh path follows a fixed cleaning and baking
+recipe: (i)~\texttt{MeshCleaner.clean(smooth\_iterations=0)} (smoothing introduces
+degenerate triangles that crash \texttt{xatlas}); (ii)~\texttt{xatlas} UV-atlas
+generation and albedo bake from vertex colours (\texttt{bake\_from\_vertex\_colors});
+(iii)~gravity/scale conversion to UE centimetre units; (iv)~FBX export via Blender
+(\texttt{blender\_obj\_to\_fbx}); (v)~UE import with \texttt{import\_materials=True}
+and Nanite enabled.  Unreal Engine discards vertex colours and the USD
+\texttt{displayColor} primvar on import; a baked UV texture is therefore the only
+mechanism by which captured colour survives into the engine.
+
+\subsection{Scene as both: splat hero + mesh asset (dreamlab choice)}
+For the dreamlab reference run, both representations are produced: the splat serves as
+the high-fidelity visual hero (rendered via NanoGS, Figure~\ref{fig:nanogs_room}), while
+the TSDF-extracted FBX provides a polygonal asset for the mesh-asset archive
+(Section~\ref{sec:results:mesh}).  This dual-representation strategy hedges delivery
+format and provides the comparison data reported in Section~\ref{sec:results:mesh}.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Stage 5: Object Reconstruction}
+\label{sec:method:objects}
+
+The object track runs in parallel with the scene track and is mandatory in every router
+configuration; TRELLIS.2 objects satisfy the polygonal-mesh mandate even when the room is
+delivered as a splat.
+
+\subsection{Segmentation: SAM3}
+Concept-based segmentation is performed with \textbf{SAM3}~\cite{sam3dobjects2025}, which
+extends the Segment Anything paradigm to a vocabulary of 4M concepts.  SAM3 is run
+per-frame on a sparse temporal sample of the training frames; per-frame masks are unioned
+by concept label to produce a per-object binary mask volume.  A depth-aware multi-view
+projection then votes each Gaussian centre inside or outside the mask across all
+registered cameras that sampled it; Gaussians inside the mask in a majority of views are
+assigned to the corresponding object.  This produces per-object Gaussian subsets ranked
+by curatorial significance (keyness $\times$ Gaussian count).
+
+\subsection{TRELLIS.2 hull\_e2e}
+\label{sec:method:trellis}
+Each per-object Gaussian subset is fed to the \textbf{TRELLIS.2}~\cite{xiang2025_trellis2}
+\texttt{hull\_e2e} reconstruction path.  TRELLIS.2 is a 4B-parameter multi-view 3D
+generation model (MIT licence; 17--60~s per object on a single 48~GB GPU at
+\texttt{1536\_cascade} geometry / 4096~px PBR textures).
+
+The hull pipeline is: (i)~orbit-render 6 panels from the per-object PLY (front, left,
+back, right at elevation 0$^\circ$; top at $+85^\circ$; bottom at $-85^\circ$);
+(ii)~per-panel coverage gate --- panels with alpha fraction below \texttt{gap\_threshold}
+are synthesised by \textbf{FLUX.2}~\cite{flux2025} view-completion conditioned on
+observed panels, recovering geometry for faces the camera never reached;
+(iii)~\texttt{Trellis2MultiViewImageToShape} shape diffusion on all six panels;
+(iv)~\texttt{Trellis2RasterizePBR} producing a textured GLB with base colour,
+metallic/roughness, and alpha maps at 4096~px.
+
+The GLB is pre-scaled to real-world centimetres via \texttt{blender\_prescale\_objects}
+(reading physical dimensions from the COLMAP point cloud), then exported to FBX for UE
+import.  The TRELLIS.2 FBX assets import into UE~5.8 with \texttt{import\_materials=True}
+and Nanite enabled; object placement uses \texttt{ue\_place\_prescaled} with
+pre-computed real-world coordinates to avoid the flaky \texttt{get\_actor\_bounds}
+dependency.\footnote{The \texttt{get\_actor\_bounds} Remote Control call was observed to throw on final UE assembly; pre-computed coordinates from \texttt{object\_meta.json} sidestep the call entirely.}
+
+TRELLIS.2 is empirically the superior object reconstruction method over Hunyuan3D-2.1 for
+the dreamlab objects (chair, vacuum cleaner, toolbox): its hull outputs are cleaner and
+more recognisable given the same per-object PLY input.  Hunyuan3D-2.1~\cite{zhao2025_hunyuan3d20}
+is retained as a fallback for cluttered or partially-observed objects.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Stage 6: Capture-Conditional Enhancers}
+\label{sec:method:enhancers}
+
+The router attaches capture-conditional enhancement stages whose benefit is specific to
+a diagnosed bottleneck.  These are not part of the default spine.
+
+\subsection{ArtiFixer: floater and under-observation repair}
+\label{sec:method:artifixer}
+\textbf{ArtiFixer}~\cite{delutio2026_artifixer} is a 14B-parameter 3DGS reconstruction-enhancement
+model (NVIDIA, Apache-2.0 code; weight licence: NVIDIA OneWay Noncommercial) that
+operates in the Gaussian parameter space to regenerate \emph{under-observed} regions ---
+holes and floaters caused by insufficient view coverage --- by learning to fill them from
+observed context.  ArtiFixer addresses a distinct failure mode from motion blur: it is
+effective when the scene is under-observed (coverage gaps), and is explicitly not a
+deblurring tool.
+
+The router activates ArtiFixer only on captures diagnosed as \emph{coverage-limited}
+(holes, floaters, $>0\%$ under-observed area) and explicitly deactivates it on
+captures diagnosed as \emph{blur-limited}, where its output is wasted compute.  The
+dreamlab capture has 0\% under-observed area (median $\sim$90 cameras per surface point)
+and a MUSIQ score of $\sim$31 (blur-limited), so ArtiFixer is \textbf{not} applied on
+this run.
+
+ArtiFixer runs in an optional sidecar container (\texttt{gaussian-toolkit-artifixer:ada-sm89})
+on a dedicated GPU.  Section~\ref{sec:results:artifixer} reports the OOM analysis and
+hardware characterisation performed on the Ada RTX~6000 (sm\_89).
+
+\subsection{BAD-Gaussians / 3dgs-deblur (experimental)}
+\label{sec:method:deblur}
+\emph{Faithful} joint deblur-during-reconstruction --- methods that model the exposure
+trajectory as a learnable parameter and jointly optimise camera motion and 3DGS
+parameters~\cite{zhao2024_badgaussians} --- is qualitatively distinct from generative
+per-frame pre-deblur (NAFNet/Restormer), which is rejected because it hallucinates
+fine detail that breaks multi-view consistency.  The faithful joint approach is the one
+honest non-recapture lever for blur-limited rooms; it is wired into the component menu
+(Figure~\ref{fig:router}, ``S\_BLUR'' branch) but has not been run on the dreamlab data
+as of this report.  Running a falsification test is the highest-priority experiment for
+the blur-limited room track.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Stage 7: Unreal Engine 5.8 Assembly}
+\label{sec:method:ue}
+
+Delivery targets \textbf{Unreal Engine~5.8}, which shipped June 2026 with a first-party
+experimental MCP plugin.  The UE~5.8 overlay runs in an optional Docker container
+(\texttt{vitrine-unreal:5.8}), built from an NVIDIA CUDA base with the UE Linux runtime
+installed in-repo at \texttt{unreal/engine/} ($\approx$73~GB, bind-mounted read-only).
+
+The control path is the UE Web Remote Control API (port~30010, unicast), proxied through
+\texttt{unreal-mcp-bridge} (port~9100) on the shared Docker network.  The first-party
+UE MCP (port~8000) is available as a secondary path.
+
+Assembly follows a pre-scale-offline strategy to avoid the flaky
+\texttt{get\_actor\_bounds} Remote Control call: object FBXs are scaled to real-world
+centimetres before import using \texttt{blender\_prescale\_objects}; placement coordinates
+are computed from \texttt{object\_meta.json} (offline COLMAP measurements).
+\texttt{ue\_place\_prescaled} then imports and places each asset at \texttt{scale=1.0}
+with pre-computed coordinates, no actor-query API calls required.  The room FBX is
+imported with Nanite enabled; the splat (when used as the room hero) is imported via the
+NanoGS plugin as described in Section~\ref{sec:method:scene:splat}.

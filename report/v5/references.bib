@@ -1,0 +1,473 @@
+% ═══════════════════════════════════════════════════════════════════════════════
+% references.bib — Vitrine v5
+% Technologies & Related Work bibliography
+% Dr John O'Hare, DreamLab AI Consulting Ltd — June 2026
+%
+% Flag convention: entries marked [UNVERIFIED-DOI] have an arXiv/venue confirmed
+% but the DOI could not be validated at time of writing; use with caution.
+% All arXiv IDs were verified live June 2026.
+% ═══════════════════════════════════════════════════════════════════════════════
+
+
+% ── 3D Gaussian Splatting ────────────────────────────────────────────────────
+
+@article{kerbl2023_3dgs,
+  author    = {Kerbl, Bernhard and Kopanas, Georgios and Leimk{\"u}hler, Thomas and Drettakis, George},
+  title     = {3{D} {G}aussian Splatting for Real-Time Radiance Field Rendering},
+  journal   = {ACM Transactions on Graphics},
+  volume    = {42},
+  number    = {4},
+  year      = {2023},
+  doi       = {10.1145/3592433},
+  note      = {Proceedings of SIGGRAPH 2023},
+}
+
+@article{huang2024_2dgs,
+  author    = {Huang, Binbin and Yu, Zehao and Chen, Anpei and Geiger, Andreas and Gao, Shenghua},
+  title     = {2{D} {G}aussian Splatting for Geometrically Accurate Radiance Fields},
+  journal   = {ACM Transactions on Graphics},
+  volume    = {43},
+  number    = {4},
+  year      = {2024},
+  doi       = {10.1145/3641519.3657428},
+  note      = {Proceedings of SIGGRAPH 2024},
+}
+
+@article{yu2024_gof,
+  author    = {Yu, Zehao and Sattler, Torsten and Geiger, Andreas},
+  title     = {Gaussian Opacity Fields: Efficient Adaptive Surface Reconstruction in Unbounded Scenes},
+  journal   = {ACM Transactions on Graphics},
+  volume    = {43},
+  number    = {6},
+  year      = {2024},
+  doi       = {10.1145/3687937},
+  note      = {Proceedings of SIGGRAPH Asia 2024},
+  eprint    = {2404.10772},
+  archivePrefix = {arXiv},
+}
+
+@article{guedon2025_milo,
+  author    = {Gu{\'e}don, Antoine and Gomez, Diego and Maruani, Nissim and Gong, Bingchen and Drettakis, George and Ovsjanikov, Maks},
+  title     = {{MILo}: Mesh-In-the-Loop {G}aussian Splatting for Detailed and Efficient Surface Reconstruction},
+  journal   = {ACM Transactions on Graphics},
+  volume    = {44},
+  year      = {2025},
+  doi       = {10.1145/3763339},
+  note      = {Proceedings of SIGGRAPH Asia 2025},
+  eprint    = {2506.24096},
+  archivePrefix = {arXiv},
+}
+
+@article{radl2026_come,
+  author    = {Radl, Lukas and Windisch, Felix and Kurz, Andreas and K{\"o}hler, Thomas and Steiner, Michael and Steinberger, Markus},
+  title     = {Confidence-Based Mesh Extraction from {3D} {G}aussians},
+  journal   = {arXiv preprint arXiv:2603.24725},
+  year      = {2026},
+  eprint    = {2603.24725},
+  archivePrefix = {arXiv},
+}
+
+@inproceedings{guedon2024_sugar,
+  author    = {Gu{\'e}don, Antoine and Lepetit, Vincent},
+  title     = {{SuGaR}: Surface-Aligned {G}aussian Splatting for Efficient {3D} Mesh Reconstruction and High-Quality Mesh Rendering},
+  booktitle = {IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+  pages     = {5354--5363},
+  year      = {2024},
+  eprint    = {2311.12775},
+  archivePrefix = {arXiv},
+}
+
+@article{chen2024_pgsr,
+  author    = {Chen, Danpeng and Ye, Weicai and Xie, Weijian and Zhai, Shangjin and Liu, Haomin and Bao, Hujun and Zhang, Guofeng},
+  title     = {{PGSR}: Planar-based {G}aussian Splatting for Efficient and High-Fidelity Surface Reconstruction},
+  journal   = {IEEE Transactions on Visualization and Computer Graphics},
+  year      = {2024},
+  eprint    = {2406.06521},
+  archivePrefix = {arXiv},
+}
+
+
+% ── Structure from Motion ─────────────────────────────────────────────────────
+
+@inproceedings{schoenberger2016sfm,
+  author    = {Sch{\"o}nberger, Johannes L. and Frahm, Jan-Michael},
+  title     = {Structure-from-Motion Revisited},
+  booktitle = {IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+  pages     = {4104--4113},
+  year      = {2016},
+  doi       = {10.1109/CVPR.2016.445},
+}
+
+@inproceedings{schoenberger2016mvs,
+  author    = {Sch{\"o}nberger, Johannes L. and Zheng, Enliang and Frahm, Jan-Michael and Pollefeys, Marc},
+  title     = {Pixelwise View Selection for Unstructured Multi-View Stereo},
+  booktitle = {European Conference on Computer Vision (ECCV)},
+  pages     = {501--518},
+  year      = {2016},
+}
+
+@article{zhao2023_aliked,
+  author    = {Zhao, Xiaoming and Wu, Xingming and Chen, Weihai and Chen, Peter C.~Y. and Xu, Qingsong and Li, Zhengguo},
+  title     = {{ALIKED}: A Lighter Keypoint and Descriptor Extraction Network via Deformable Transformation},
+  journal   = {IEEE Transactions on Instrumentation and Measurement},
+  volume    = {72},
+  year      = {2023},
+  eprint    = {2304.03608},
+  archivePrefix = {arXiv},
+  doi       = {10.1109/TIM.2023.3271000},
+}
+
+@inproceedings{lindenberger2023_lightglue,
+  author    = {Lindenberger, Philipp and Sarlin, Paul-Edouard and Pollefeys, Marc},
+  title     = {{LightGlue}: Local Feature Matching at Light Speed},
+  booktitle = {IEEE/CVF International Conference on Computer Vision (ICCV)},
+  year      = {2023},
+  eprint    = {2306.13643},
+  archivePrefix = {arXiv},
+}
+
+@article{lowe2004_sift,
+  author    = {Lowe, David G.},
+  title     = {Distinctive Image Features from Scale-Invariant Keypoints},
+  journal   = {International Journal of Computer Vision},
+  volume    = {60},
+  number    = {2},
+  pages     = {91--110},
+  year      = {2004},
+  doi       = {10.1023/B:VISI.0000029664.99615.94},
+}
+
+
+% ── Neural Radiance Fields ────────────────────────────────────────────────────
+
+@inproceedings{mildenhall2020_nerf,
+  author    = {Mildenhall, Ben and Srinivasan, Pratul P. and Tancik, Matthew and Barron, Jonathan T. and Ramamoorthi, Ravi and Ng, Ren},
+  title     = {{NeRF}: Representing Scenes as Neural Radiance Fields for View Synthesis},
+  booktitle = {European Conference on Computer Vision (ECCV)},
+  pages     = {405--421},
+  year      = {2020},
+}
+
+@article{barron2022_mipnerf360,
+  author    = {Barron, Jonathan T. and Mildenhall, Ben and Verbin, Dor and Srinivasan, Pratul P. and Hedman, Peter},
+  title     = {Mip-{NeRF} 360: Unbounded Anti-Aliased Neural Radiance Fields},
+  journal   = {IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+  year      = {2022},
+  eprint    = {2111.12077},
+  archivePrefix = {arXiv},
+}
+
+
+% ── Volumetric reconstruction / TSDF ─────────────────────────────────────────
+
+@inproceedings{curless1996_tsdf,
+  author    = {Curless, Brian and Levoy, Marc},
+  title     = {A Volumetric Method for Building Complex Models from Range Images},
+  booktitle = {Proceedings of the 23rd Annual Conference on Computer Graphics and Interactive Techniques (SIGGRAPH)},
+  pages     = {303--312},
+  year      = {1996},
+  doi       = {10.1145/237170.237269},
+}
+
+@article{lorensen1987_marching,
+  author    = {Lorensen, William E. and Cline, Harvey E.},
+  title     = {Marching Cubes: A High Resolution {3D} Surface Construction Algorithm},
+  journal   = {ACM SIGGRAPH Computer Graphics},
+  volume    = {21},
+  number    = {4},
+  pages     = {163--169},
+  year      = {1987},
+  doi       = {10.1145/37402.37422},
+}
+
+@article{zhou2018_open3d,
+  author    = {Zhou, Qian-Yi and Park, Jaesik and Koltun, Vladlen},
+  title     = {{Open3D}: A Modern Library for {3D} Data Processing},
+  journal   = {arXiv preprint arXiv:1801.09847},
+  year      = {2018},
+  eprint    = {1801.09847},
+  archivePrefix = {arXiv},
+}
+
+
+% ── Segmentation ──────────────────────────────────────────────────────────────
+
+@inproceedings{kirillov2023_sam,
+  author    = {Kirillov, Alexander and Mintun, Eric and Ravi, Nikhila and Mao, Hanzi and Rolland, Chlo{\'e} and Gustafson, Laura and Xiao, Tete and Whitehead, Spencer and Berg, Alexander C. and Lo, Wan-Yen and Doll{\'a}r, Piotr and Girshick, Ross},
+  title     = {Segment Anything},
+  booktitle = {IEEE/CVF International Conference on Computer Vision (ICCV)},
+  pages     = {4015--4026},
+  year      = {2023},
+  doi       = {10.1109/ICCV51070.2023.00371},
+  eprint    = {2304.02643},
+  archivePrefix = {arXiv},
+}
+
+@article{ravi2024_sam2,
+  author    = {Ravi, Nikhila and Gabeur, Valentin and Hu, Yuan-Ting and Hu, Ronghang and Ryali, Chaitanya and Ma, Tengyu and Khedr, Haitham and R{\"a}dle, Roman and Rolland, Chlo{\'e} and Gustafson, Laura and Mintun, Eric and Pan, Junting and Alwala, Kalyan Vasudev and Carion, Nicolas and Wu, Chao-Yuan and Girshick, Ross and Doll{\'a}r, Piotr and Feichtenhofer, Christoph},
+  title     = {{SAM}~2: Segment Anything in Images and Videos},
+  journal   = {arXiv preprint arXiv:2408.00714},
+  year      = {2024},
+  eprint    = {2408.00714},
+  archivePrefix = {arXiv},
+}
+
+@misc{sam3dobjects2025,
+  author       = {{Meta AI Research}},
+  title        = {{SAM-3D} Objects: Segment Anything in {3D} Scenes},
+  year         = {2025},
+  howpublished = {\url{https://github.com/facebookresearch/sam-3d-objects}},
+  note         = {Non-commercial research licence; accessed June 2026.
+                  [UNVERIFIED: no accompanying arXiv paper confirmed at time of writing]},
+}
+
+
+% ── Image-to-3D / Object Generation ──────────────────────────────────────────
+
+@inproceedings{xiang2024_trellis,
+  author    = {Xiang, Jianfeng and Lv, Zelong and Xu, Sicheng and Deng, Yu and Wang, Ruicheng and Zhang, Bowen and Chen, Dong and Tong, Xin and Yang, Jiaolong},
+  title     = {Structured {3D} Latents for Scalable and Versatile {3D} Generation},
+  booktitle = {IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+  year      = {2025},
+  note      = {Spotlight},
+  eprint    = {2412.01506},
+  archivePrefix = {arXiv},
+}
+
+@article{xiang2025_trellis2,
+  author    = {Xiang, Jianfeng and others},
+  title     = {Native and Compact Structured Latents for {3D} Generation},
+  journal   = {arXiv preprint arXiv:2512.14692},
+  year      = {2025},
+  eprint    = {2512.14692},
+  archivePrefix = {arXiv},
+  note      = {TRELLIS.2; Tsinghua University and Microsoft Research.
+               Code and model: \url{https://github.com/microsoft/TRELLIS.2}. MIT licence.},
+}
+
+@article{zhao2025_hunyuan3d20,
+  author    = {Zhao, Zibo and others},
+  title     = {Hunyuan{3D} 2.0: Scaling Diffusion Models for High Resolution Textured {3D} Assets Generation},
+  journal   = {arXiv preprint arXiv:2501.12202},
+  year      = {2025},
+  eprint    = {2501.12202},
+  archivePrefix = {arXiv},
+  note      = {74 authors; Tencent Hunyuan3D Team.},
+}
+
+@article{hunyuan2025_21,
+  author    = {{Team Hunyuan3D} and Yang, Shuhui and Yang, Mingxin and Feng, Yifei and Huang, Xin and others},
+  title     = {Hunyuan{3D} 2.1: From Images to High-Fidelity {3D} Assets with Production-Ready {PBR} Material},
+  journal   = {arXiv preprint arXiv:2506.15442},
+  year      = {2025},
+  eprint    = {2506.15442},
+  archivePrefix = {arXiv},
+  note      = {Tencent Hunyuan3D Team. CC-BY-4.0 paper; Tencent-Community model licence.},
+}
+
+
+% ── Generative / Diffusion Models ────────────────────────────────────────────
+
+@misc{flux2025,
+  author       = {{Black Forest Labs}},
+  title        = {{FLUX.2}: Rectified Flow Transformer for High-Resolution Image Synthesis},
+  year         = {2025},
+  howpublished = {\url{https://github.com/black-forest-labs/flux}},
+  note         = {Non-commercial research licence (FLUX.1/FLUX.2-dev).
+                  No accompanying peer-reviewed paper; model released August 2024,
+                  FLUX.2-dev November 2025. Accessed June 2026.},
+}
+
+@misc{qwenvl2025,
+  author       = {{Qwen Team, Alibaba Cloud}},
+  title        = {Qwen-Image-Edit: Instruction-Following Vision--Language Model for Image Editing and View Synthesis},
+  year         = {2025},
+  howpublished = {\url{https://huggingface.co/Qwen/Qwen-Image-Edit}},
+  note         = {Apache-2.0 licence. Release September 2025 (updated December 2025). Accessed June 2026.
+                  [UNVERIFIED: no standalone paper at time of writing; cite the Qwen2-VL
+                  arXiv:2409.12191 for the backbone architecture if needed.]},
+}
+
+@misc{mvadapter2024,
+  author       = {Huang, Zehuan and others},
+  title        = {{MV-Adapter}: Multi-View Consistent Image Generation via Adapter},
+  year         = {2024},
+  howpublished = {\url{https://github.com/huanngzh/MV-Adapter}},
+  note         = {Apache-2.0 licence. Accepted ICCV 2025. Accessed June 2026.
+                  [UNVERIFIED-arXiv: confirm arXiv ID before submission]},
+}
+
+@article{wan2025,
+  author    = {{Team Wan}},
+  title     = {Wan: Open and Advanced Large-Scale Video Generative Models},
+  journal   = {arXiv preprint arXiv:2503.18053},
+  year      = {2025},
+  eprint    = {2503.18053},
+  archivePrefix = {arXiv},
+  note      = {Wan2.1-T2V-14B base model underlying ArtiFixer. Apache-2.0.},
+}
+
+
+% ── Reconstruction Enhancement ────────────────────────────────────────────────
+
+@inproceedings{delutio2026_artifixer,
+  author    = {de~Lutio, Riccardo and Fischer, Tobias and Chang, Yen-Yu and Zhang, Yuxuan and Wu, Jay~Zhangjie and Ren, Xuanchi and Shen, Tianchang and Tothova, Katarina and Gojcic, Zan and Turki, Haithem},
+  title     = {{ArtiFixer}: Enhancing and Extending {3D} Reconstruction with Auto-Regressive Diffusion Models},
+  booktitle = {ACM SIGGRAPH 2026 Conference Proceedings},
+  year      = {2026},
+  eprint    = {2603.00492},
+  archivePrefix = {arXiv},
+  note      = {NVIDIA Spatial Intelligence Lab. Apache-2.0 code; NVIDIA OneWay Noncommercial weights.
+               \url{https://github.com/nv-tlabs/ArtiFixer}},
+}
+
+@inproceedings{wu2025_3dgut,
+  author    = {Wu, Qi and Martinez~Esturo, Janick and Mirzaei, Ashkan and Moenne-Loccoz, Nicolas and Gojcic, Zan},
+  title     = {{3DGUT}: Enabling Distorted Cameras and Secondary Rays in {G}aussian Splatting},
+  booktitle = {IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+  year      = {2025},
+  note      = {3DGRUT rasteriser underlying ArtiFixer3D.},
+}
+
+
+% ── Capture Quality and Frame Selection ───────────────────────────────────────
+
+@inproceedings{ke2021_musiq,
+  author    = {Ke, Junjie and Wang, Qifei and Wang, Yilin and Milanfar, Peyman and Yang, Feng},
+  title     = {{MUSIQ}: Multi-scale Image Quality Transformer},
+  booktitle = {IEEE/CVF International Conference on Computer Vision (ICCV)},
+  pages     = {5148--5157},
+  year      = {2021},
+  eprint    = {2108.05997},
+  archivePrefix = {arXiv},
+}
+
+@inproceedings{wang2023_qalign,
+  author    = {Wang, Haoning and Liao, Zicheng and Wu, Shuo and Xu, Chunyi and Lin, Weisi and Hosu, Vlad and Zhang, Xinyu and Sun, Wenhan and Zicheng, Zhang and Min, Xiongkuo and Zhai, Guangtao},
+  title     = {{Q-Align}: Teaching {LMM}s for Visual Scoring via Discrete Text-Defined Levels},
+  booktitle = {International Conference on Machine Learning (ICML)},
+  year      = {2024},
+  eprint    = {2312.17090},
+  archivePrefix = {arXiv},
+  note      = {Also known as OneAlign. Accessed June 2026.},
+}
+
+@misc{chen2022_pyiqa,
+  author       = {Chen, Chaofeng and Mo, Jiadi},
+  title        = {{IQA-PyTorch}: {PyTorch} Toolbox for Image Quality Assessment},
+  year         = {2022},
+  howpublished = {\url{https://github.com/chaofengc/IQA-PyTorch}},
+  note         = {Accessed June 2026. Implements MUSIQ, BRISQUE, NIQE, LPIPS, FID, and others.},
+}
+
+@article{pertuz2013_focus,
+  author    = {Pertuz, Said and Puig, Domenec and Garcia, Miguel A.},
+  title     = {Analysis of Focus Measure Operators for Shape-from-Focus},
+  journal   = {Pattern Recognition},
+  volume    = {46},
+  number    = {5},
+  pages     = {1415--1432},
+  year      = {2013},
+  doi       = {10.1016/j.patcog.2012.11.011},
+}
+
+@inproceedings{zhao2024_badgaussians,
+  author    = {Zhao, Lingzhe and Wang, Peng and Liu, Peidong},
+  title     = {{BAD-Gaussians}: Bundle Adjusted Deblur {G}aussian Splatting},
+  booktitle = {European Conference on Computer Vision (ECCV)},
+  year      = {2024},
+  eprint    = {2403.11831},
+  archivePrefix = {arXiv},
+  doi       = {10.1007/978-3-031-72698-9_14},
+}
+
+
+% ── Texture Baking and Mesh Post-processing ───────────────────────────────────
+
+@misc{xatlas2018,
+  author       = {Paliero, Jonathan},
+  title        = {xatlas: Mesh Parameterisation / {UV} Unwrapping Library},
+  year         = {2018},
+  howpublished = {\url{https://github.com/jpcy/xatlas}},
+  note         = {C\texttt{++}11, no external dependencies. Fork of thekla\_atlas.
+                  Accessed June 2026.},
+}
+
+@misc{blender2024,
+  author       = {{Blender Foundation}},
+  title        = {Blender --- Free and Open {3D} Creation Software},
+  year         = {2024},
+  howpublished = {\url{https://www.blender.org/}},
+  note         = {Version 4.x; accessed June 2026.},
+}
+
+
+% ── Game Engine and Delivery ──────────────────────────────────────────────────
+
+@misc{epicgames2024_ue5,
+  author       = {{Epic Games}},
+  title        = {Unreal Engine 5.8},
+  year         = {2024},
+  howpublished = {\url{https://www.unrealengine.com/}},
+  note         = {Linux installed build; Nanite virtualised geometry; Web Remote Control API.
+                  Accessed June 2026.},
+}
+
+@misc{nanogs2026,
+  author       = {Chen, Tim},
+  title        = {{NanoGS}: Nanite-Style {G}aussian Splatting Plugin for Unreal Engine~5},
+  year         = {2026},
+  howpublished = {\url{https://github.com/GreatOreo/NanoGS}},
+  note         = {Released March 2026 by Moonshine Studio. No accompanying research paper.
+                  Accessed June 2026.},
+}
+
+@misc{pixar2019_usd,
+  author       = {{Pixar Animation Studios}},
+  title        = {Universal Scene Description ({USD})},
+  year         = {2019},
+  howpublished = {\url{https://openusd.org/}},
+  note         = {Accessed June 2026.},
+}
+
+
+% ── Tooling / Infrastructure ──────────────────────────────────────────────────
+
+@misc{lichtfeld2026,
+  author       = {{MrNeRF and contributors}},
+  title        = {{LichtFeld Studio}: An Open Real-Time {G}aussian Splatting Training and Editing Suite},
+  year         = {2026},
+  howpublished = {\url{https://github.com/MrNeRF/LichtFeld-Studio}},
+  note         = {Version 0.5.2; C\texttt{++}23/CUDA; 70-tool MCP server. Accessed June 2026.},
+}
+
+@misc{comfyui2024,
+  author       = {{comfyanonymous and contributors}},
+  title        = {{ComfyUI}: A Modular Node-Based Diffusion Model Execution Engine},
+  year         = {2024},
+  howpublished = {\url{https://github.com/comfyanonymous/ComfyUI}},
+  note         = {Accessed June 2026.},
+}
+
+
+% ── Quality Metrics (standard) ────────────────────────────────────────────────
+
+@article{wang2004_ssim,
+  author    = {Wang, Zhou and Bovik, Alan C. and Sheikh, Hamid R. and Simoncelli, Eero P.},
+  title     = {Image Quality Assessment: From Error Visibility to Structural Similarity},
+  journal   = {IEEE Transactions on Image Processing},
+  volume    = {13},
+  number    = {4},
+  pages     = {600--612},
+  year      = {2004},
+  doi       = {10.1109/TIP.2003.819861},
+}
+
+@inproceedings{zhang2018_lpips,
+  author    = {Zhang, Richard and Isola, Phillip and Efros, Alexei A. and Shechtman, Eli and Wang, Oliver},
+  title     = {The Unreasonable Effectiveness of Deep Features as a Perceptual Metric},
+  booktitle = {IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+  pages     = {586--595},
+  year      = {2018},
+  doi       = {10.1109/CVPR.2018.00068},
+}

@@ -1,0 +1,642 @@
+% appendix_playbook.tex — Vitrine Operator Playbook
+% Practical user-guide appendix for the v5 report.
+% Wire into main with:
+%   \appendix
+%   \input{v5/appendix_playbook}
+%
+% Dr John O'Hare, DreamLab AI Consulting Ltd — June 2026
+
+% =====================================================================
+\chapter{Operator Playbook: Running Vitrine End-to-End}
+\label{app:playbook}
+% =====================================================================
+
+This appendix is a practical guide for a new operator.  It assumes the Docker
+stack is accessible but does not assume familiarity with the internals; the
+steps call the pipeline through its published Python and REST interfaces.
+Read the capture section (\S\ref{sec:pb-capture}) before anything else:
+\emph{capture quality is the single largest determinant of output quality},
+and no downstream step can compensate for footage that was never sharp.
+
+% ─────────────────────────────────────────────────────────────────────
+\section{Capture Methodology: The Dominant Quality Lever}
+\label{sec:pb-capture}
+% ─────────────────────────────────────────────────────────────────────
+
+\begin{keyfinding}
+Motion blur is the dominant failure mode in practice.  Empirical measurement
+on the \emph{dreamlab} dataset found zero under-observed area (median
+$\approx$\,90 cameras per surface point) yet a holey, noisy reconstruction.
+The problem was dense-but-motion-blurred footage, not insufficient coverage.
+Blur cannot be recovered in post: selection can raise the sharpness floor, but
+it cannot create detail the sensor never recorded.
+\end{keyfinding}
+
+\subsection{Camera settings}
+\label{sec:pb-camera-settings}
+
+Lock all automatic adjustments before pressing record.  Any automatic change
+between frames is interpreted by COLMAP as a change in scene appearance and
+degrades feature matching.
+
+\begin{center}
+\begin{tabular}{@{}L{3.2cm}L{4.8cm}L{5.8cm}@{}}
+\toprule
+\textbf{Setting} & \textbf{Recommendation} & \textbf{Why} \\
+\midrule
+Resolution     & 4K (3840$\times$2160)           & More features per frame; 8K adds storage cost without proportional gain as training downsamples anyway \\
+Frame rate     & \textbf{60\,fps}                 & Caps exposure to $\leq$\,1/60\,s vs.\ 1/30\,s at 30\,fps, halving motion blur; also doubles the candidate frames for sharpness selection \\
+Focus          & Manual, mid-distance (3--5\,m)  & Autofocus hunting softens frames and breaks feature matching \\
+Exposure       & Manual, locked                  & Auto-exposure causes frame-to-frame brightness ramps that COLMAP interprets as surface-appearance changes \\
+White balance  & Manual preset                   & Auto white balance shifts colour temperature between frames \\
+Shutter speed  & $\geq$\,1/500\,s (lock in pro app) & Short exposure is the primary anti-blur lever; bright, even light lets you achieve this without under-exposure \\
+Lens           & 24--50\,mm equivalent (1$\times$ main camera on phones) & Minimal distortion; ultra-wide ($<$16\,mm) fails in periphery; telephoto reduces parallax \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\medskip
+\noindent\textbf{Phone-specific note.}  Flagship phones (iPhone 15 Pro,
+Pixel 9 Pro, Samsung S24 Ultra) produce usable video \emph{only} if you use
+the main 1$\times$ camera, lock exposure, focus, and white balance via a pro
+app (e.g.\ mcpro24fps, FiLMiC Pro), and shoot in good light.  The Pixel 9 Pro
+experiment found \textbf{4K/60\,fps} to be the best video mode: 60\,fps caps
+exposure and doubles candidate frames.  \textbf{8K/30\,fps is worse}: the
+longer exposure from 30\,fps produces blurrier frames; extra pixels on a
+blurred frame are wasted.  If the camera supports RAW photo bursts, those are
+even better --- very short exposure, no inter-frame compression.
+
+\subsection{Movement and stabilisation}
+\label{sec:pb-movement}
+
+\begin{itemize}
+  \item \textbf{Maximum walking speed: 0.5\,m/s.}  Counting ``one-Mississippi''
+        per step is a practical governor.  When in doubt, slow down further.
+  \item \textbf{Use a gimbal} (DJI RS, Zhiyun) or a tripod dolly.  These
+        eliminate micro-shake and rolling-shutter artefacts.  Two-handed
+        handheld capture is marginal in bright light; single-hand phone capture
+        introduces motion blur on most frames and should be avoided.
+  \item \textbf{Insert micro-pauses} at key viewpoints.  The sharpness
+        sampler harvests the sharp still frames from these pauses.  Even a
+        fraction of a second of steadiness at a corner or interesting object is
+        worth more than continuous motion.
+  \item \textbf{Move laterally, not just forward.}  The pipeline needs
+        triangulation, and triangulation needs physical baseline between
+        viewpoints.  Sidestep, arc, and weave rather than walking straight ahead.
+  \item \textbf{Every point in the scene should be visible from at least five
+        viewpoints.}  Revisit areas from different angles rather than passing
+        through once.
+\end{itemize}
+
+\subsection{Capture patterns}
+\label{sec:pb-patterns}
+
+\paragraph{Room scan (60--120\,s per room).}
+Walk the full perimeter at three height bands — low ($\approx$\,1\,m, waist),
+eye level ($\approx$\,1.6\,m), and high (arms raised, $\approx$\,2.2\,m) —
+then walk the two diagonals to fill the interior.  This gives three elevation
+bands of every wall plus cross-coverage of floor and ceiling.  Multiple
+independent sweeps of the same room at different heights combine into a denser
+reconstruction than any single sweep: an observed three-sweep capture produced
+$\approx$146\,k COLMAP points at $\approx$95\,\% registration versus $\approx$90\,k
+at $\approx$90\,\% for a single perimeter pass.
+
+\paragraph{Object orbit (30--60\,s per object).}
+The best room sweep is rarely the best for any individual object.  Objects you
+want as individual hulls need a \emph{dedicated} close orbit in addition to
+the room sweeps:
+\begin{enumerate}[nosep]
+  \item Orbit at eye level ($\approx$1.5\,m distance): full 360°, 20\,s.
+  \item Orbit at knee height, camera angled upward: full 360°, 20\,s.
+  \item Orbit above head, camera angled downward: full 360°, 20\,s.
+\end{enumerate}
+
+\paragraph{Detail pass (10--15\,s per feature).}
+After room and object passes, sweep 30--50\,cm from important surfaces (carved
+detail, lettering, fine texture).  These close-up frames lift the resolution
+ceiling for that region.
+
+\subsection{Scene preparation}
+\label{sec:pb-scene-prep}
+
+\begin{itemize}
+  \item \textbf{Remove all moving elements.}  People, animals, ceiling fans,
+        screens playing video, swaying plants — any inter-frame motion creates
+        smeared ghost geometry.  Pause recording if someone walks through the
+        scene.  Even a person standing still shifts weight and breathes.
+  \item \textbf{Turn screens off.}  A powered-off TV is far less glossy than a
+        running one.  A running TV is the worst-case object: a large,
+        view-dependent reflector whose reflections defeat both SfM (inconsistent
+        features) and 3DGS (spherical-harmonics overfit the moving reflection
+        into floaters).  The 2026-06-21 Drive dataset was abandoned for exactly
+        this reason combined with low MUSIQ scores.
+  \item \textbf{Cover mirrors and polished surfaces.}  Matte fabric or dulling
+        spray prevents ghost geometry behind reflective surfaces.
+  \item \textbf{Ensure even, diffuse lighting.}  Overcast sky is ideal outdoors.
+        Indoors, use large soft panels or bounce lights off the ceiling.  Before
+        recording, rotate 360° in the scene centre watching the exposure meter:
+        if it swings more than 1.5 stops, add fill light or flag bright sources.
+  \item \textbf{Add temporary texture to featureless surfaces.}  White walls and
+        plain ceilings give COLMAP nothing to match.  Place books, plants, or
+        patterned cloth against blank walls during capture; remove them later if
+        needed.
+\end{itemize}
+
+\subsection{Do / do not summary}
+\label{sec:pb-donot}
+
+\begin{center}
+\begin{tabular}{@{}L{5.8cm}L{7.2cm}@{}}
+\toprule
+\textbf{Do} & \textbf{Do not} \\
+\midrule
+4K/60\,fps, manual exposure, focus, WB & Use auto-exposure or auto white balance \\
+Gimbal or two-handed stabilisation & Pan fast ($>$15°/s) or shoot single-handed \\
+$\leq$\,0.5\,m/s, micro-pauses at key points & Walk at normal pace \\
+Three height bands + diagonals & Walk only one straight path through the space \\
+Dedicated 360° object orbits & Assume the room sweep covers individual objects \\
+Transfer the original camera file over USB & Upload to a cloud service that transcodes \\
+Even, diffuse lighting & Mix tungsten and daylight; allow hard shadows \\
+Turn screens and fans off & Capture with any motion in the scene \\
+$\geq$1/500\,s shutter (lock in pro app) & Rely on in-camera optical stabilisation alone for blur \\
+4K/60\,fps on phones & Use 8K/30\,fps (blurrier despite higher pixel count) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Why blur is unrecoverable}
+\label{sec:pb-blur-unrecoverable}
+
+Motion blur is a measurement artefact: a blurred pixel is the average of many
+spatial samples acquired over the exposure window, and the individual samples
+are gone.  Per-frame generative deblurring (NAFNet, Restormer) hallucinates
+texture rather than recovering it, and the hallucinated texture is spatially
+inconsistent across frames, which breaks multi-view SfM.  The only
+reconstruction methods that legitimately model blur --- joint exposure-trajectory
+optimisation approaches such as \textsc{3dgs-deblur} --- show gains of
+approximately 1--2\,dB PSNR on \emph{moderate} blur but hit the same
+SfM-quality ceiling as the source footage.  \textbf{Blur is unrecoverable in
+post; the real lever is short-shutter capture.}
+
+The Vitrine frame-QA gate applies a MUSIQ no-reference IQA score plus a full-resolution
+variance-of-Laplacian sharpness score to every extracted frame.  A video that cannot
+supply \code{min\_good\_frames} above the KEEP threshold is marked
+\code{too\_low\_quality} and the operator is asked to recapture.  The dreamlab
+dataset scored a median MUSIQ of $\approx$\,31 (usable but blur-limited); the
+abandoned Drive dataset scored $\approx$\,19 (unusable).  The gate is a diagnostic,
+not a repair: it tells you when recapture is necessary.
+
+% ─────────────────────────────────────────────────────────────────────
+\section{Running the Pipeline}
+\label{sec:pb-run}
+% ─────────────────────────────────────────────────────────────────────
+
+\subsection{Bringing up the stack}
+\label{sec:pb-stack}
+
+All pipeline work runs inside the \code{gaussian-toolkit} container.  From the
+repository root on the host:
+
+\begin{lstlisting}[language=bash,caption={Bring up the consolidated stack}]
+# Clone with the vendored LichtFeld tool included
+git clone --recurse-submodules <repo-url>
+cd Vitrine
+
+# Start the pipeline containers (GPU required)
+docker compose -f docker-compose.consolidated.yml up -d
+
+# Verify the stack is healthy
+curl http://gaussian-toolkit:7860/health     # web UI
+curl http://gaussian-toolkit:45677/mcp       # LichtFeld MCP
+curl http://vitrine-comfyui:8188/system_stats  # ComfyUI (TRELLIS.2 / FLUX.2)
+\end{lstlisting}
+
+\noindent The Unreal Engine 5.8 overlay is optional and started separately:
+
+\begin{lstlisting}[language=bash,caption={Bring up the Unreal overlay (optional)}]
+docker compose \
+  -f docker-compose.consolidated.yml \
+  -f unreal/docker-compose.unreal.yml \
+  up -d unreal unreal-mcp-bridge
+\end{lstlisting}
+
+\noindent Run the SOTA preflight check to verify model weights and VRAM before
+processing any footage:
+
+\begin{lstlisting}[language=bash,caption={SOTA preflight}]
+python -m pipeline.sota_registry check
+\end{lstlisting}
+
+\noindent If any weight or pin is stale the preflight reports it; resolve before
+continuing.  Model weights live in \code{data/comfyui/models/} ($\approx$\,216\,GB,
+bind-mounted read-only); do not re-download them.
+
+\subsection{Ingest and frame QA}
+\label{sec:pb-ingest}
+
+Place source video files in \code{data/raw/} and submit the job via the web UI
+(\texttt{http://localhost:7860}) or directly:
+
+\begin{lstlisting}[language=bash,caption={Step 1 -- ingest and frame extraction}]
+python3 -c "
+from pipeline.stages import PipelineStages
+p = PipelineStages('/data/output/JOB_ID')
+result = p.ingest('/data/raw/scene.mp4', fps=4.0)
+print(result)
+"
+\end{lstlisting}
+
+\noindent Ingest extracts frames at 4\,fps to oversample, then the frame-QA
+stage selects the sharpest subset.  The QA pipeline applies two complementary
+metrics:
+
+\begin{enumerate}
+  \item \textbf{MUSIQ no-reference IQA} (\code{pyiqa}, GPU).  A
+        perceptual score on the KonIQ-10k scale ($\approx$0--100; good
+        photography scores 50--75; severely blurred or noisy footage scores
+        below $\approx$25).  Videos unable to supply enough frames above the
+        KEEP threshold are marked \code{too\_low\_quality} and skipped.
+  \item \textbf{Full-resolution variance-of-Laplacian.}  Sharpness is measured
+        at full 4K resolution, not at a downscaled proxy --- downscaling blurs
+        away the motion-blur signal (960p blurdetect showed only a
+        $\approx$1.6$\times$ range on dreamlab frames; full-4K Laplacian showed a
+        $\approx$105$\times$ range).  The \emph{sharpest frame per overlapping
+        FIFO window} is kept, which raises the sharpness floor by 20--38\,\% at
+        the bottom quartile --- the frames that most poison COLMAP matches.
+\end{enumerate}
+
+\noindent Inspect the selected frame count before proceeding:
+
+\begin{lstlisting}[language=bash,caption={Step 3 -- select best frames}]
+python3 -c "
+from pipeline.stages import PipelineStages
+p = PipelineStages('/data/output/JOB_ID')
+result = p.select_frames('/data/output/JOB_ID/frames/', target=80)
+print(result)
+"
+# Target: 60-80 frames. If < 40 are above threshold, consider recapture.
+\end{lstlisting}
+
+\subsection{Structure-from-Motion and 3DGS training}
+\label{sec:pb-sfm-train}
+
+\begin{lstlisting}[language=bash,caption={Step 4 -- COLMAP SfM (sequential matcher for video)}]
+python3 -c "
+from pipeline.stages import PipelineStages
+p = PipelineStages('/data/output/JOB_ID')
+result = p.reconstruct('/data/output/JOB_ID/frames_selected/',
+                       matcher='sequential')
+print(result)
+"
+# Quality gate: >= 70 % of frames must register.
+# If < 50 % register, re-run with matcher='exhaustive'.
+\end{lstlisting}
+
+\begin{lstlisting}[language=bash,caption={Step 5 -- 3DGS training (30\,000 iterations)}]
+python3 -c "
+from pipeline.stages import PipelineStages
+p = PipelineStages('/data/output/JOB_ID')
+result = p.train('/data/output/JOB_ID/colmap/undistorted/',
+                 iterations=30000)
+print(result)
+"
+# Quality gate: PLY file should be > 10 MB; loss < 0.02.
+\end{lstlisting}
+
+\noindent The output splat is \code{output/JOB\_ID/model/splat\_30000.ply}.  This
+file is the primary LichtFeld-native deliverable that feeds both the Gaussian
+splat room path and the object segmentation branch.
+
+\subsection{The stage sequence}
+\label{sec:pb-sequence}
+
+The full pipeline in order:
+
+\begin{center}
+\begin{tabular}{@{}lL{4.5cm}L{6cm}@{}}
+\toprule
+\textbf{Stage} & \textbf{What runs} & \textbf{Quality check} \\
+\midrule
+1 & Ingest: frame extraction at 4\,fps & \code{frames/} directory populated \\
+2 & Remove people (if present) & Inspect sample frames \\
+3 & Frame-QA selection & 60--80 KEEP-grade frames \\
+4 & COLMAP SfM (sequential matcher) & $\geq$\,70\,\% registration \\
+5 & 3DGS training (30\,k iterations) & PLY $>$10\,MB, loss $<$0.02 \\
+6 & SAM3 concept segmentation & $\geq$\,2 objects identified \\
+7 & Per-object PLY extraction + orbit renders & $\geq$5\,k vertices per object \\
+7c & TRELLIS.2 hull\_e2e (textured GLB) & Textured GLB produced per object \\
+8 & Room mesh extraction (TSDF or 2DGS) & $\geq$\,30\,k vertices, clean topology \\
+8b & Mesh cleanup (\code{mesh\_cleaner smooth=0}) & No stray bridging triangles \\
+8c & Texture bake (xatlas UV + vertex colours) & Texture atlas per mesh \\
+9 & FBX export (\code{blender\_obj\_to\_fbx}) & FBX files produced \\
+9b & UE 5.8 import (Nanite game assets) & Assets visible in Content Browser \\
+10 & Validate + job complete & Full scene: room + objects \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent \textbf{Do not stop after training.}  The pipeline is only complete
+when it reaches the textured UE scene; stopping at the splat leaves the
+deliverable unfinished.
+
+% ─────────────────────────────────────────────────────────────────────
+\section{Per-Capture Recipe Selection}
+\label{sec:pb-recipe}
+% ─────────────────────────────────────────────────────────────────────
+
+Vitrine is not a fixed pipeline.  Each capture is \emph{diagnosed} first; the
+router selects the configuration that best fits the capture's bottleneck.  The
+four diagnostic axes are:
+
+\begin{description}
+  \item[Sharpness] Measured by MUSIQ + full-resolution Laplacian.  Is the
+    footage blur-limited?
+  \item[Coverage] Measured by a per-surface-point viewpoint count.  Are there
+    under-observed regions (holes) or is coverage uniformly dense?
+  \item[Hardware] RGB camera only, depth sensor (iPhone LiDAR), or event camera?
+  \item[Deliverable] Fidelity-first splat room, polygonal mesh room, or both?
+\end{description}
+
+\noindent Table~\ref{tab:pb-recipes} maps common capture profiles to their
+recommended configurations.
+
+\begin{table}[ht]
+\centering
+\caption{Capture profile to recipe selector.  Objects are always reconstructed
+via TRELLIS.2 \code{hull\_e2e} regardless of room profile.}
+\label{tab:pb-recipes}
+\begin{tabular}{@{}L{3.4cm}L{2.4cm}L{2.4cm}L{2.2cm}L{3.0cm}@{}}
+\toprule
+\textbf{Capture profile} & \textbf{Room rep} & \textbf{Enhancer} & \textbf{Mesh backend} & \textbf{Note} \\
+\midrule
+\textbf{Blurry $\cdot$ dense $\cdot$ RGB}
+  (e.g.\ dreamlab)
+  & Splat hero + mesh asset (dual)
+  & \emph{None} (ArtiFixer won't help)
+  & 2DGS / PGSR
+  & Recapture is the real ceiling \\
+\addlinespace
+\textbf{Sharp $\cdot$ holey $\cdot$ RGB}
+  & Splat (primary)
+  & \textbf{ArtiFixer} (fills floaters/holes)
+  & 2DGS / PGSR if mesh required
+  & ArtiFixer's sweet spot \\
+\addlinespace
+\textbf{Sharp $\cdot$ dense $\cdot$ RGB}
+  & Splat (primary)
+  & None
+  & 2DGS if mesh needed
+  & Best case; least pain \\
+\addlinespace
+\textbf{iPhone LiDAR depth}
+  & Mesh (primary)
+  & Optional
+  & \textbf{AGS-Mesh} (sensor depth)
+  & Depth sensor unlocks clean walls \\
+\addlinespace
+\textbf{Event camera $\cdot$ blurry}
+  & Splat
+  & ---
+  & ---
+  & EBAD-Gaussian deblurs at source \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Splat vs.\ mesh for the room}
+\label{sec:pb-splat-vs-mesh}
+
+\textbf{Default --- room as splat (NanoGS in UE 5.8).}  For an indoor room the
+recommended default is to represent the room as a real Gaussian splat rendered
+by the NanoGS UE 5.8 plugin, with object FBXs from TRELLIS.2 embedded
+alongside it.  This is simultaneously the highest-fidelity path and the one
+that leans most directly on the vendored LichtFeld trainer: the native
+\code{splat\_30000.ply} is cleaned with SuperSplat, imported into UE 5.8, and
+rendered as real Gaussians.  The mandated polygonal mesh is satisfied by the
+TRELLIS.2 object FBXs.
+
+\textbf{When to use a polygonal room mesh.}  If the brief requires a fully
+polygonal game-asset scene (Nanite room mesh, not a splat), use \textbf{2DGS}
+(quick win, same Open3D-TSDF backend as the current fallback, but 2D-surfel
+depth is much cleaner than ellipsoid depth on flat walls) or \textbf{PGSR}
+(planar Gaussians, explicitly handles textureless walls, strongest for indoor
+rooms).  The legacy CoMe/Open3D-TSDF combination is retained as a fallback
+but produces visibly blockier results and should not be the default.
+
+\textbf{When ArtiFixer helps.}  ArtiFixer is a 3DGS refiner targeting
+floaters, holes, and under-observed regions: it applies an opacity-mix
+enhancement that fills in areas seen from too few viewpoints.  It runs on a
+single 48\,GB RTX 6000 Ada (peak $\approx$\,45.5\,GB) and is the correct tool
+for \emph{sharp but coverage-limited} captures.  It does \emph{not} deblur.
+Applying ArtiFixer to a blur-limited capture wastes GPU time without improving
+results.
+
+\textbf{NanoGS floaters.}  The NanoGS plugin renders the splat faithfully,
+including any floater Gaussians in the source PLY.  Pre-clean the PLY with
+SuperSplat (floater removal by opacity and scale thresholds) before import.
+If floaters persist after SuperSplat, check whether coverage was the issue
+(ArtiFixer) or whether the source footage was simply blurry (recapture).
+
+\subsection{Object reconstruction}
+\label{sec:pb-objects}
+
+Objects follow the same path regardless of room profile:
+
+\begin{enumerate}
+  \item \textbf{SAM3 concept segmentation} identifies freestanding objects in
+        the splat and extracts per-object Gaussian PLY subsets.
+  \item \textbf{Orbit render}: four synthetic camera views around the object
+        centroid are rendered from the Gaussian subset.
+  \item \textbf{TRELLIS.2 \code{hull\_e2e}}: the orbit renders are submitted to
+        TRELLIS.2 (via ComfyUI at \code{http://vitrine-comfyui:8188}) which runs
+        FLUX.2 turnaround generation followed by TRELLIS.2 3D reconstruction,
+        producing a textured GLB with PBR materials.
+  \item \textbf{Prescale}: Blender prescales the GLB to physical units to match
+        the COLMAP coordinate frame.
+  \item \textbf{FBX export}: the prescaled mesh is exported as FBX for UE 5.8
+        game-asset import (Nanite-ready).
+\end{enumerate}
+
+\noindent TRELLIS.2 is the validated primary path; Hunyuan3D-2.1 (also staged
+in ComfyUI) is the fallback for cases where the orbit renders are cluttered or
+partially occluded.  Restart ComfyUI between objects if VRAM is under pressure:
+FLUX.2 and TRELLIS.2 cannot co-reside with other large models on 48\,GB.
+
+\subsection{VRAM phasing}
+\label{sec:pb-vram}
+
+The pipeline phases large models to avoid out-of-memory conditions.  The key
+constraint is that FLUX.2 and TRELLIS.2 together require $\approx$\,45\,GB; they
+cannot share VRAM with other resident models.  The orchestrator manages the
+lifecycle automatically (load $\to$ infer $\to$ free) but the operator should
+be aware:
+
+\begin{itemize}
+  \item If ComfyUI reports an OOM, the previous model was not freed cleanly.
+        Restart the \code{vitrine-comfyui} container and re-run from the failing
+        object.
+  \item Process objects serially, not in parallel, unless a second GPU is
+        dedicated to the task.
+  \item ArtiFixer peaks at $\approx$\,45.5\,GB; do not run it concurrently with
+        any ComfyUI workflow.
+\end{itemize}
+
+% ─────────────────────────────────────────────────────────────────────
+\section{Troubleshooting}
+\label{sec:pb-troubleshoot}
+% ─────────────────────────────────────────────────────────────────────
+
+\subsection{Recapture flag: footage too soft}
+\label{sec:pb-ts-recapture}
+
+\begin{technote}
+\textbf{Symptom.}  The frame-QA stage returns \code{VideoQualityVerdict.too\_low\_quality} for all
+or most input videos.  The MUSIQ median is below $\approx$\,25.
+\end{technote}
+
+The QA gate cannot manufacture sharpness that was never recorded.  Lowering
+the MUSIQ threshold feeds more frames to COLMAP but does not improve the
+reconstruction --- it just postpones a failure that COLMAP will surface as low
+registration or that 3DGS training will surface as a blurry, noisy splat.
+
+\textbf{Resolution: recapture} following the camera settings and movement
+guidance in \S\ref{sec:pb-camera-settings}--\ref{sec:pb-movement}.  Checklist:
+\begin{itemize}[nosep]
+  \item Switch to 60\,fps (halves exposure time vs.\ 30\,fps).
+  \item Lock shutter at $\geq$\,1/500\,s in a pro camera app.
+  \item Reduce movement speed; add micro-pauses at key viewpoints.
+  \item Use a gimbal or brace the camera firmly.
+  \item Ensure bright, even illumination (adequate light allows fast shutter
+        without under-exposure).
+\end{itemize}
+
+\subsection{Directional blur gate}
+\label{sec:pb-ts-blur-gate}
+
+Vitrine applies a directional blur metric in addition to the MUSIQ score:
+optical-flow magnitude and direction identify frames where camera motion was
+predominantly linear (walking forward) versus rotational (panning).  Panning
+motion at low shutter speeds produces pronounced horizontal or vertical blur
+streaks that fool the Laplacian sharpness metric (which measures spatial
+frequency without direction).  Frames with high directional blur are downgraded
+before FIFO windowed selection.
+
+If the frame-QA gate discards a high fraction of frames despite the footage
+appearing ``mostly sharp'', check whether long pan segments are responsible:
+inspect the flow field overlays saved to \code{output/JOB\_ID/qa\_debug/}.
+Recapture with slower, more deliberate panning ($<$\,15°/s) or replace panning
+segments with lateral translation.
+
+\subsection{COLMAP: low registration rate}
+\label{sec:pb-ts-colmap}
+
+A COLMAP registration below 70\,\% usually indicates one of the following:
+
+\begin{description}
+  \item[Insufficient overlap] You moved too fast or the scene was only captured
+    from one direction.  Recapture with slower movement and the systematic
+    multi-pass patterns described in \S\ref{sec:pb-patterns}.
+  \item[COLMAP invocation flags] With COLMAP 4.1.0 the option namespace changed;
+    old recipes silently use wrong flags.  Use \code{--FeatureExtraction.*} and
+    \code{--FeatureMatching.*} (not the old \code{--SiftExtraction.*} namespace).
+    Run feature extraction on GPU (\code{--FeatureExtraction.type SIFT} on GPU):
+    GPU SIFT achieved $\approx$\,100\,\% registration on the multi-sweep
+    dreamlab captures.
+  \item[Missing output directory] COLMAP silently fails to create its database if
+    the output directory does not already exist.  Run
+    \code{mkdir -p colmap/} before invoking \code{feature\_extractor}.
+  \item[Mixed cameras] If the capture combined multiple devices, pass
+    \code{--ImageReader.single\_camera\_per\_folder} so COLMAP does not force
+    one shared intrinsic model across devices.
+  \item[Featureless surfaces] Large white walls or uniform floors provide no
+    feature points.  Add temporary texture to blank surfaces before
+    recapturing (\S\ref{sec:pb-scene-prep}).
+\end{description}
+
+\subsection{NanoGS floaters in the UE scene}
+\label{sec:pb-ts-floaters}
+
+\begin{description}
+  \item[Cause: coverage holes.]  Regions seen from fewer than five viewpoints
+    generate noisy or un-anchored Gaussians.  Apply ArtiFixer (the correct tool
+    for this profile) before running SuperSplat.
+  \item[Cause: motion blur in source footage.]  A blurry Gaussian is still a
+    Gaussian; NanoGS renders it faithfully as a blurry blob.  ArtiFixer does
+    not help here.  The resolution is recapture.
+  \item[Prune with SuperSplat before UE import.] SuperSplat's opacity and scale
+    thresholds reliably remove stray low-opacity Gaussians that accumulate in
+    poorly observed regions.  Run SuperSplat on every PLY before importing into
+    UE regardless of whether ArtiFixer was applied.
+\end{description}
+
+\subsection{UE import scale and object placement}
+\label{sec:pb-ts-ue-scale}
+
+UE 5.8 imports FBX in centimetres by default; the COLMAP/3DGS coordinate
+frame is in metres.  Vitrine's \code{blender\_prescale\_objects} step converts
+object meshes to physical scale before FBX export.  If imported objects appear
+100$\times$ too large or too small, check that \code{blender\_prescale\_objects}
+ran successfully and that the UE import dialogue has \textit{Import Uniform
+Scale} set to 1.0 (not 0.01 or 100).  Use \code{ue\_place\_prescaled} (the
+keeper placement script) rather than hand-placing objects via Remote Control,
+which has been observed to produce incorrect scale on the final assembly step.
+
+\subsection{GPU VRAM OOM during ComfyUI object processing}
+\label{sec:pb-ts-vram}
+
+FLUX.2 and TRELLIS.2 together peak at $\approx$\,45.5\,GB.  If a workflow
+fails with an out-of-memory error:
+\begin{enumerate}[nosep]
+  \item Restart the \code{vitrine-comfyui} container to flush all resident
+        models: \code{docker restart vitrine-comfyui}.
+  \item Re-submit the failing object workflow.  ComfyUI's queue is persistent
+        across restarts; the job will resume from the failed node.
+  \item If OOM recurs, check that ArtiFixer is not concurrently resident.
+        ArtiFixer should be run as a separate stage with ComfyUI idle.
+  \item If the \code{vitrine-comfyui} container is sharing GPU\,0 with
+        \code{gaussian-toolkit} 3DGS training, defer object processing until
+        training is complete.
+\end{enumerate}
+
+\noindent The \code{--local\_attn\_size} flag in ArtiFixer is the dominant
+VRAM lever: reducing it from the default to a smaller window size (e.g.\ 128)
+significantly reduces peak usage at a modest quality cost.  See
+\code{docker/artifixer/patches/} for the confirmed fix applied to the
+dreamlab run.
+
+% ─────────────────────────────────────────────────────────────────────
+\section{Pre-Capture Checklist}
+\label{sec:pb-checklist}
+% ─────────────────────────────────────────────────────────────────────
+
+Print and check before every capture session.
+
+\begin{center}
+\fbox{\begin{minipage}{0.92\textwidth}
+\textbf{Pre-capture}\\[2pt]
+$\square$\ Scene is fully static: no people, pets, fans, active screens, or flowing water\\
+$\square$\ Lighting is even and consistent (meter swing $<$\,1.5 stops over 360°)\\
+$\square$\ Mirrors and reflective surfaces covered or removed\\
+$\square$\ Featureless walls have temporary texture added\\
+$\square$\ Camera battery charged; storage space verified\\[6pt]
+\textbf{Camera settings}\\[2pt]
+$\square$\ Resolution: 4K; frame rate: 60\,fps\\
+$\square$\ Focus: MANUAL, mid-distance\\
+$\square$\ Exposure: MANUAL, locked for average scene brightness\\
+$\square$\ Shutter: $\geq$\,1/500\,s (locked in pro app)\\
+$\square$\ White balance: MANUAL preset matched to light source\\
+$\square$\ Lens: 24--50\,mm equivalent (1$\times$ main camera on phones)\\[6pt]
+\textbf{Capture}\\[2pt]
+$\square$\ Using gimbal or braced two-handed stabilisation\\
+$\square$\ Movement speed: $\leq$\,0.5\,m/s; micro-pauses at key viewpoints\\
+$\square$\ Perimeter passes at three heights (low / eye / high)\\
+$\square$\ Centre diagonal cross-passes\\
+$\square$\ Dedicated 360° orbit of each key object at three heights\\
+$\square$\ Detail pass of important features (30--50\,cm, 10--15\,s each)\\
+$\square$\ Total duration: 60--120\,s per room; 30--60\,s per object\\[6pt]
+\textbf{Post-capture}\\[2pt]
+$\square$\ Transfer original file via USB or AirDrop (not cloud)\\
+$\square$\ No re-encoding unless unavoidable; if required: H.264 CRF\,18, original resolution\\
+$\square$\ File placed in \code{data/raw/} on the pipeline host\\
+\end{minipage}}
+\end{center}

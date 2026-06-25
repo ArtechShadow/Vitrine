@@ -1,0 +1,82 @@
+flowchart TD
+    %% ===================== INGEST =====================
+    V[Video ingest]:::keeper --> FE[Frame extraction]:::keeper
+    FE --> FQ["Frame QA<br/>MUSIQ NR-IQA + full-res Laplacian<br/>sharpest-per-window FIFO"]:::keeper
+    FQ --> DEBLUR["Deblur PRE-processing?<br/>NAFNet / Restormer / RVRT<br/>BEFORE COLMAP"]:::untested
+    FQ --> SFM["COLMAP SfM<br/>ALIKED + LightGlue"]:::keeper
+    DEBLUR -.->|NEVER TRIED| SFM
+
+    %% ===================== TRAIN =====================
+    SFM --> TRAIN{3DGS trainer}:::keeper
+    TRAIN --> LF["LichtFeld NATIVE<br/>ImprovedGS+ ppisp unpruned"]:::untested
+    TRAIN --> COME["CoMe<br/>trains own gaussians"]:::keeper
+    TRAIN --> GSPLAT[gsplat]:::keeper
+    COME --> SPLAT[("3DGS splat .ply")]:::keeper
+    GSPLAT --> SPLAT
+    LF -.->|"splat EXISTS task#21,<br/>never used downstream<br/>= campaign step 3"| SPLAT
+
+    %% ===================== ENHANCE (optional) =====================
+    SPLAT --> AF["ArtiFixer enhance?<br/>fixes floaters/holes NOT blur<br/>RUNS on 48GB Ada (OOM fixed)"]:::opt
+
+    %% ===================== SCENE branch =====================
+    SPLAT --> SCENE{Scene representation}:::keeper
+    AF -.-> SCENE
+    SCENE --> SMESH[Scene = MESH]:::keeper
+    SCENE --> SSPLAT[Scene = SPLAT]:::keeper
+
+    %% ---- mesh backends ----
+    SMESH --> MB{Mesh backend}:::keeper
+    MB --> TSDFL["CoMe-TSDF legacy<br/>ScalableTSDFVolume KEEPER"]:::keeper
+    MB --> TSDFG["gsplat-TSDF<br/>tsdf_room.py validated"]:::keeper
+    MB --> TSDFV["CoMe-TSDF tensor<br/>VoxelBlockGrid DEAD"]:::dead
+    MB --> MILO[MILo]:::tried
+    MB --> GW[GaussianWrapping]:::tried
+    MB --> TETS["CoMe-tets raw + cleanup"]:::tried
+    MB --> SOTA2["2DGS / GOF / RaDe-GS<br/>SuGaR / PGSR SOTA surface recon"]:::untested
+    SOTA2 -.->|NEVER TRIED| MCLEAN
+    TSDFL --> MCLEAN["Mesh cleanup<br/>mesh_cleaner smooth=0 · edge+CC"]:::keeper
+    TSDFG --> MCLEAN
+    MCLEAN --> TEX{Texture}:::keeper
+    TEX --> XATLAS["xatlas bake<br/>bake_from_vertex_colors · scene_texture_fast"]:::keeper
+    TEX --> BBAKE["Blender Cycles bake"]:::tried
+    XATLAS --> FBXS[blender_obj_to_fbx]:::keeper
+    FBXS --> UEMESH["UE mesh game asset (Nanite)"]:::keeper
+
+    %% ---- splat into UE ----
+    SSPLAT --> UEROUTE{Splat into UE}:::keeper
+    UEROUTE --> LIDAR["LiDAR Point Cloud plugin<br/>ACHIEVED but blocky"]:::keeper
+    UEROUTE --> UEGS["3DGS UE plugin<br/>XScene-UE / Luma / UnrealGS"]:::untested
+    UEROUTE --> BLGS["Blender 3DGS addon convert<br/>KIRI 3DGS Render"]:::untested
+    UEROUTE --> KSPLAT[".ksplat web viewer"]:::tried
+    LIDAR --> UEROOM[Room in UE]:::keeper
+    UEGS -.->|"NEVER TRIED real splat render?"| UEROOM
+    BLGS -.->|"NEVER TRIED the conversion path hunch"| UEROOM
+
+    %% ===================== OBJECTS branch =====================
+    SPLAT --> SEG["Concept segmentation<br/>SAM3 / SAM2"]:::keeper
+    SEG --> OIN{Object input form}:::keeper
+    OIN --> OPLY["per-object PLY (gaussian crop)"]:::keeper
+    OIN --> OCROP["SAM 2D image crops"]:::tried
+    OPLY --> TRELLIS["TRELLIS.2 hull_e2e<br/>orbit+FLUX.2+TRELLIS.2+PBR WINNER"]:::keeper
+    OCROP --> HUNYUAN["Hunyuan3D-2.1<br/>clutter-prone fallback"]:::tried
+    OCROP --> SAM3D["SAM3D-Objects"]:::untested
+    TRELLIS --> OGLB[("textured GLB")]:::keeper
+    HUNYUAN --> OGLB
+    OGLB --> OPRE["prescale (blender_prescale_objects)"]:::keeper
+    OPRE --> OFBX[object FBX]:::keeper
+    OFBX --> UEOBJ["UE object game assets validated"]:::keeper
+
+    %% ===================== DELIVERY =====================
+    UEMESH --> ASM{Assembly}:::keeper
+    UEROOM --> ASM
+    UEOBJ --> ASM
+    ASM --> UEPLACE["ue_place_prescaled (RC) keeper"]:::keeper
+    ASM --> BPROOF["Blender proof (blender_scene_assemble)"]:::keeper
+    UEPLACE --> DELIV(["UE 5.8 scene: room + objects"]):::keeper
+    BPROOF --> DELIV
+
+    classDef keeper fill:#1b5e20,stroke:#66bb6a,color:#fff
+    classDef tried fill:#4e342e,stroke:#bcaaa4,color:#fff
+    classDef dead fill:#b71c1c,stroke:#ef5350,color:#fff
+    classDef untested fill:#f9a825,stroke:#fff176,color:#000
+    classDef opt fill:#f9a825,stroke:#fff176,color:#000

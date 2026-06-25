@@ -1,0 +1,346 @@
+% main.tex — Vitrine v5: Capture-Adaptive Video-to-3D-Scene Pipeline for UE 5.8
+% Academic report compiled with pdflatex + bibtex (4-pass).
+%
+% House style inherited from report/main_v4.tex:
+%   documentclass report, a4paper, 11pt
+%   Packages: inputenc, fontenc, babel, microtype, geometry, lmodern, inconsolata,
+%             xcolor, graphicx, tikz, booktabs, tabularx, longtable, array,
+%             amsmath, amssymb, csquotes, enumitem, caption, hyperref, bookmark,
+%             fancyhdr, listings, tcolorbox, titlesec
+%   Colour macros: UoSRed, DreamLabAccent, DarkBg, MidGrey, LightGrey, CodeBg,
+%                  SuccessGreen, WarningAmber, DangerRed
+%   Custom environments: keyfinding, technote (and recommendation from v4)
+%   L{} column type
+%   lstlisting bash configuration
+%
+% Dr John O'Hare, DreamLab AI Consulting Ltd — June 2026
+
+\documentclass[a4paper,11pt]{report}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[british]{babel}
+\usepackage{microtype}
+\usepackage[a4paper,top=28mm,bottom=28mm,inner=26mm,outer=24mm,headheight=22pt]{geometry}
+\usepackage{lmodern}
+\usepackage[dvipsnames,svgnames,x11names]{xcolor}
+
+\definecolor{UoSRed}{HTML}{B71234}
+\definecolor{DreamLabAccent}{HTML}{6366F1}
+\definecolor{DarkBg}{HTML}{0F172A}
+\definecolor{MidGrey}{HTML}{64748B}
+\definecolor{LightGrey}{HTML}{F1F5F9}
+\definecolor{CodeBg}{HTML}{1E293B}
+\definecolor{SuccessGreen}{HTML}{15803D}
+\definecolor{WarningAmber}{HTML}{B45309}
+\definecolor{DangerRed}{HTML}{B91C1C}
+
+\usepackage{graphicx}
+\graphicspath{{v5/}{figures/}{figures/v2/}{figures/v3/}}
+\usepackage{tikz}
+\usetikzlibrary{calc,positioning,arrows.meta,shapes.geometric,backgrounds,fit}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{array}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+\usepackage{amsmath,amssymb}
+\usepackage{csquotes}
+\usepackage{enumitem}
+\setlist{nosep,leftmargin=*}
+\usepackage{caption}
+\captionsetup{font=small,labelfont={bf,color=UoSRed}}
+
+\usepackage[colorlinks=true,linkcolor=UoSRed,citecolor=DreamLabAccent,urlcolor=DreamLabAccent,
+  bookmarks=true,bookmarksnumbered=true,
+  pdfauthor={Dr John O'Hare},
+  pdftitle={Vitrine: A Capture-Adaptive Video-to-3D-Scene Pipeline for Unreal Engine 5.8},
+  pdfsubject={3D Gaussian Splatting, Unreal Engine 5.8, Capture-Adaptive Pipeline, Game Assets}]{hyperref}
+\usepackage{bookmark}
+\usepackage{url}
+
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\textcolor{MidGrey}{\leftmark}}
+\fancyfoot[R]{\small\textcolor{MidGrey}{\thepage}}
+\fancyfoot[C]{\small\textcolor{MidGrey}{Vitrine v5, DreamLab AI Consulting Ltd}}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.2pt}
+\renewcommand{\headrule}{\hbox to\headwidth{\color{UoSRed}\leaders\hrule height \headrulewidth\hfill}}
+
+\usepackage{listings}
+\lstset{basicstyle=\ttfamily\footnotesize,backgroundcolor=\color{LightGrey},frame=single,
+  rulecolor=\color{MidGrey},breaklines=true,showstringspaces=false,tabsize=2,
+  keywordstyle=\color{DreamLabAccent}\bfseries,commentstyle=\color{MidGrey}\itshape,
+  stringstyle=\color{SuccessGreen},extendedchars=true,
+  literate={---}{{---}}3 {--}{{--}}2 {->}{{$\rightarrow$}}2
+    {checkmark}{{\checkmark}}1 {>=}{{$\geq$}}2 {<=}{{$\leq$}}2}
+\lstdefinestyle{bash}{language=bash,
+  morekeywords={docker,curl,python3,git,cmake,cargo,pytest,docker-compose},
+  keywordstyle=\color{DreamLabAccent}\bfseries}
+
+\usepackage[most]{tcolorbox}
+\newtcolorbox{keyfinding}[1][]{enhanced,colback=UoSRed!5,colframe=UoSRed,fonttitle=\bfseries,
+  title={Key Finding},left=5mm,boxrule=0.8pt,#1}
+\newtcolorbox{recommendation}[1][]{enhanced,colback=DreamLabAccent!6,colframe=DreamLabAccent,
+  fonttitle=\bfseries,title={Recommendation},left=5mm,boxrule=0.8pt,#1}
+\newtcolorbox{technote}[1][]{enhanced,colback=LightGrey,colframe=MidGrey,fonttitle=\bfseries,
+  title={Technical Note},left=5mm,boxrule=0.6pt,#1}
+
+\usepackage{titlesec}
+\titleformat{\chapter}[display]{\normalfont\huge\bfseries\color{DarkBg}}
+  {\textcolor{UoSRed}{\chaptertitlename\ \thechapter}}{8pt}{\Huge}
+\titlespacing*{\chapter}{0pt}{-18pt}{26pt}
+\titleformat{\section}{\normalfont\Large\bfseries\color{DarkBg}}{\textcolor{UoSRed}{\thesection}}{1em}{}
+\titleformat{\subsection}{\normalfont\large\bfseries\color{DarkBg}}{\textcolor{DreamLabAccent}{\thesubsection}}{1em}{}
+
+% Convenience macros
+\newcommand{\chip}[2]{\textcolor{#1}{\textbf{#2}}}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\validated}{\chip{SuccessGreen}{validated}}
+\newcommand{\inprogress}{\chip{WarningAmber}{in progress}}
+\newcommand{\designed}{\chip{MidGrey}{designed}}
+\newcommand{\wip}{\chip{WarningAmber}{in progress}}
+\newcommand{\built}{\chip{SuccessGreen}{built}}
+
+% natbib-compatible bibliography style
+\usepackage[numbers,sort&compress]{natbib}
+
+\begin{document}
+\sloppy
+
+% ───────────────────────── Title page ─────────────────────────
+\begin{titlepage}
+\begin{tikzpicture}[remember picture, overlay]
+  \fill[DarkBg] (current page.south west) rectangle (current page.north east);
+  \foreach \r in {2,3.2,4.4,5.6} {
+    \draw[UoSRed, opacity=0.15, line width=0.6pt]
+      ($(current page.north west) + (2.5,-3)$) circle (\r);}
+  \foreach \i in {0,0.8,...,6.4} {
+    \draw[DreamLabAccent, opacity=0.10, line width=0.5pt]
+      ($(current page.south east) + (-\i-1, 0.5)$) -- ($(current page.south east) + (-0.5, \i+1)$);}
+  \fill[UoSRed] ($(current page.west) + (0,2)$) rectangle ($(current page.east) + (0,2.08)$);
+  \fill[DreamLabAccent] ($(current page.west) + (0,1.9)$) rectangle ($(current page.east) + (0,1.94)$);
+  \node[anchor=north west, text=UoSRed, font=\footnotesize\sffamily\bfseries, text width=13cm]
+    at ($(current page.north west) + (3,-2)$)
+    {v5 ACADEMIC REPORT \textcolor{MidGrey}{|} DREAMLAB REFERENCE RUN VALIDATED};
+  \node[anchor=west, text=white, font=\fontsize{40}{44}\selectfont\bfseries\sffamily, text width=15cm]
+    at ($(current page.west) + (3,5.6)$) {Vitrine};
+  \node[anchor=west, text=white, font=\fontsize{13}{17}\selectfont\sffamily, text width=14cm]
+    at ($(current page.west) + (3,3.2)$)
+    {A Capture-Adaptive Video-to-3D-Scene Pipeline\\for Unreal Engine~5.8};
+  \node[anchor=west, text=MidGrey, font=\normalsize\sffamily, text width=13cm]
+    at ($(current page.west) + (3,0.5)$)
+    {video \textbullet\ COLMAP \textbullet\ 3D Gaussian Splatting \textbullet\ SAM3 \textbullet\ TRELLIS.2\\
+     NanoGS \textbullet\ mesh \textbullet\ xatlas bake \textbullet\ FBX \textbullet\ UE\,5.8 game assets};
+  \node[anchor=west, text=white, font=\sffamily, text width=10cm]
+    at ($(current page.west) + (3,-2.2)$)
+    {\textbf{Dr John O'Hare}\\[2pt] DreamLab AI Consulting Ltd\\[8pt]
+     \textcolor{MidGrey}{Pairs with the upstream}\\[2pt] \textbf{LichtFeld Studio} reconstruction engine};
+  \node[anchor=west, text=DreamLabAccent, font=\sffamily\bfseries]
+    at ($(current page.west) + (3,-5.0)$) {June 2026};
+  \node[anchor=south east, text=MidGrey, font=\tiny\sffamily]
+    at ($(current page.south east) + (-3,1)$)
+    {v5.0 \textcolor{MidGrey}{|} CAPTURE-ADAPTIVE PIPELINE \textbullet\ UE\,5.8 DELIVERY};
+\end{tikzpicture}
+\end{titlepage}
+
+% ───────────────────────── Front matter ─────────────────────────
+\pagenumbering{roman}
+
+% ── Abstract ──────────────────────────────────────────────────────────────────
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+\markboth{Abstract}{Abstract}
+
+Vitrine is a \textbf{capture-adaptive} video-to-3D-scene pipeline that turns
+hand-held walkthrough footage into structured, game-ready assets for
+\textbf{Unreal Engine~5.8}.  Rather than applying a fixed reconstruction recipe
+to every capture, Vitrine first \emph{diagnoses} each dataset on four
+orthogonal axes --- sharpness, coverage, available hardware, and deliverable
+format --- and then selects the combination of components whose benefit matches
+the diagnosed bottleneck.  The key insight is that the best pipeline is a
+function of the data, not a property of the system.
+
+The pipeline is validated end-to-end on the \textbf{dreamlab reference capture}:
+a 600-frame, 4K/30\,fps handheld walkthrough of a workshop/studio space,
+reconstructed with COLMAP (600/600 frames registered) and trained to a
+2.48M-Gaussian splat.  The validated dreamlab run produces: a real-Gaussian splat
+room rendered in UE\,5.8 via the \textbf{NanoGS} plugin (MIT, recompiled for
+UE\,5.8); three TRELLIS.2 textured object FBXs (chair, vacuum, toolbox) placed at
+pre-computed real-world coordinates; and a comparative TSDF mesh branch.
+
+A central empirical finding is \textbf{honest and negative}: the dreamlab room is
+\emph{capture-limited}, not extractor-limited.  2DGS surface reconstruction
+achieves planarity 69.7\% versus TSDF 72.0\% --- a $\Delta=2.3$ percentage-point
+gap within measurement noise.  Neither exceeds the fair-room threshold; the binding
+constraint is motion blur in the source footage (MUSIQ $\approx$31), and no mesh
+extractor can raise that ceiling.  The room is therefore delivered as the
+LichtFeld-native splat hero via NanoGS; the polygonal-mesh mandate is satisfied by
+the TRELLIS.2 object FBXs.
+
+Two further contributions are reported: a \textbf{directional sharpness gate}
+(structure-tensor minor eigenvalue $\lambda_2$) that distinguishes directional
+motion blur from isotropic softness and raises the bottom-quartile sharpness of
+selected frames by 20--38\%; and a full hardware characterisation of
+\textbf{ArtiFixer}~\cite{delutio2026_artifixer} on the NVIDIA RTX~6000~Ada
+(48\,GB, sm\_89), showing that three targeted OOM fixes reduce peak VRAM from
+out-of-memory to 45.5\,GB, enabling the 14B coverage-gap refiner to run on
+Ada-generation hardware.
+
+\tableofcontents
+\listoffigures
+\listoftables
+
+% ───────────────────────── Main matter ─────────────────────────
+\cleardoublepage
+\pagenumbering{arabic}
+
+% ====================================================================
+\chapter{Introduction}
+\label{chap:intro}
+
+% ── Problem ──────────────────────────────────────────────────────────────────
+\section{The Problem: Real Captures Fail in Different Ways}
+\label{sec:intro:problem}
+
+Photorealistic 3D reconstruction from hand-held video is a mature technology: the
+combination of Structure-from-Motion (SfM), 3D Gaussian Splatting
+(3DGS)~\cite{kerbl2023_3dgs}, and game-engine delivery is now within reach of any
+operator with a modern smartphone and a GPU workstation.  The unsolved problem is
+not the algorithm --- it is the \emph{mismatch between the algorithm's assumptions
+and the real-world data it receives}.
+
+Real captures fail in qualitatively different ways.  A handheld walkthrough at
+walking pace fails due to \emph{motion blur}: the Gaussian field faithfully records
+blurry observations, and no mesh extractor or training recipe can recover
+sub-shutter-speed detail from pixels that were never resolved.  A tripod scan of a
+large space fails due to \emph{coverage gaps}: the camera never reached certain
+surfaces, Gaussians sprout as floaters in the unobserved void, and the mesh
+contains holes.  A mobile-phone RGB-only capture fails differently from an
+iPhone-LiDAR capture.  A project that demands Nanite-compatible collision meshes
+fails differently from one that accepts a volumetric splat.
+
+Any single fixed reconstruction recipe will be sub-optimal for most of these cases.
+Optimising the pipeline for blur-limited footage (e.g.\ BAD-Gaussians
+deblur~\cite{zhao2024_badgaussians}) adds wasted compute on a dense-but-sharp
+capture.  Applying ArtiFixer~\cite{delutio2026_artifixer} to a blur-limited room is
+similarly wasted: the model stays faithful to observed pixels and only fills
+\emph{unobserved} regions; on a dense-but-blurry capture, there are no unobserved
+regions to fill.
+
+% ── Thesis ──────────────────────────────────────────────────────────────────
+\section{The Capture-Adaptive Thesis}
+\label{sec:intro:thesis}
+
+Vitrine's answer is the \textbf{capture-adaptive thesis}: \emph{diagnose first,
+then route}.  Every incoming capture is profiled on four independent axes before
+any 3D computation begins:
+
+\begin{description}
+  \item[Sharpness] Is motion blur the dominant defect, or is the footage sharp?
+    Measured by MUSIQ no-reference IQA~\cite{ke2021_musiq} and a full-resolution
+    variance-of-Laplacian score via \texttt{pyiqa}~\cite{chen2022_pyiqa}.
+  \item[Coverage] Are under-observed regions (holes, floaters) the dominant
+    defect, or is the reconstruction dense?  Measured by a per-surface-point
+    viewpoint-count occupancy probe.
+  \item[Hardware] Does the capture include a depth sensor (iPhone LiDAR, event
+    camera), or is it RGB-only?
+  \item[Deliverable] Is a volumetric splat room representation sufficient, or does
+    the project mandate a polygonal mesh (for collision, LOD, Nanite)?
+\end{description}
+
+\noindent A \emph{router} (Figure~\ref{fig:router}) evaluates these four axes
+independently and assembles the appropriate configuration.  The four axes are
+orthogonal: sharpness and coverage can each be good or bad independently, hardware
+is a given, and the deliverable requirement is a project constraint.  The
+router's decision space has $2^4 = 16$ nominal configurations; the section
+files describe the validated subset.
+
+% ── Contributions ─────────────────────────────────────────────────────────────
+\section{Contributions}
+\label{sec:intro:contributions}
+
+This report documents the following validated contributions:
+
+\begin{enumerate}
+  \item \textbf{Capture-adaptive router} (\S\ref{sec:method:overview}).  A
+    four-axis diagnosis-and-route mechanism that selects pipeline components based
+    on the capture profile rather than a fixed recipe.
+
+  \item \textbf{NanoGS splat-hero room in UE~5.8}
+    (\S\ref{sec:results:nanogs}).  The LichtFeld-native 3DGS output is cleaned with
+    SuperSplat and rendered as real Gaussians inside UE~5.8 via the NanoGS plugin,
+    recompiled from its UE~5.6/5.7 codebase.  This closes the prior ``LiDAR
+    point-cloud workaround'' and delivers the highest fidelity available from the
+    captured data without an intermediate mesh-extraction step.
+
+  \item \textbf{TRELLIS.2 object FBXs in UE~5.8}
+    (\S\ref{sec:results:objects}).  Three dreamlab objects (chair, vacuum,
+    toolbox) are reconstructed as textured polygonal game assets via the
+    TRELLIS.2~\cite{xiang2025_trellis2} \texttt{hull\_e2e} workflow and placed at
+    pre-computed real-world coordinates, satisfying the Nanite polygonal-mesh
+    mandate without requiring the room to be meshed.
+
+  \item \textbf{Empirical capture-limited finding}
+    (\S\ref{sec:results:mesh}).  A controlled comparison of 2DGS and TSDF
+    mesh extraction on the dreamlab capture establishes that the room is
+    capture-limited: SOTA surface reconstruction provides no measurable benefit
+    over a legacy TSDF on motion-blurred input.
+
+  \item \textbf{Directional sharpness gate}
+    (\S\ref{sec:results:framegate}).  An upgraded frame-quality gate based on the
+    structure-tensor minor eigenvalue $\lambda_2$ that distinguishes
+    directional motion blur from isotropic softness and raises the bottom-quartile
+    sharpness of selected frames by 20--38\%.
+
+  \item \textbf{ArtiFixer on Ada sm\_89}
+    (\S\ref{sec:results:artifixer}).  Three targeted VRAM fixes reduce
+    ArtiFixer~\cite{delutio2026_artifixer} peak usage from OOM to 45.5\,GB on a
+    48\,GB RTX~6000~Ada, enabling the coverage-gap refiner to run on Ada-generation
+    hardware without a FlashAttention-3 dependency.
+\end{enumerate}
+
+\begin{keyfinding}
+The dreamlab reference run validates the capture-adaptive architecture on real data.
+The headline lesson is honest: a SOTA mesh extractor cannot raise the quality ceiling
+set by the source footage.  The splat-hero path (NanoGS) is both the highest-fidelity
+and the most pipeline-lean option for a blur-limited capture; recapture at shorter
+shutter speed is the real quality lever.
+\end{keyfinding}
+
+% ====================================================================
+\chapter{Technologies and Related Work}
+\label{chap:tech}
+
+\input{v5/sec_technologies}
+
+% ====================================================================
+\chapter{Method: The Capture-Adaptive Pipeline}
+\label{chap:method}
+
+\input{v5/sec_method}
+
+% ====================================================================
+\chapter{Results: Dreamlab Reference Run}
+\label{chap:results}
+
+\input{v5/sec_results}
+
+% ====================================================================
+% Figures — float here, referenced from chapters above
+% ====================================================================
+
+\input{v5/figures}
+
+% ====================================================================
+\appendix
+\input{v5/appendix_playbook}
+
+% ====================================================================
+\bibliographystyle{unsrt}
+\bibliography{v5/references}
+
+\end{document}

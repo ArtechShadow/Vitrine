@@ -1,0 +1,40 @@
+flowchart TD
+    CAP[/"New capture (video)"/]:::io --> DIAG["DIAGNOSE<br/>frame-QA MUSIQ + Laplacian · COLMAP / VGGSfM · coverage probe · hardware tag"]:::keeper
+    DIAG --> PROF{{"CAPTURE PROFILE<br/>sharpness · coverage · hardware · deliverable"}}:::profile
+
+    PROF --> G1{"Room deliverable?"}:::gate
+    G1 -->|"fidelity-first"| R_SPLAT["ROOM = SPLAT<br/>LichtFeld .ply → SuperSplat → NanoGS (UE5.8)"]:::keeper
+    G1 -->|"polygonal room required"| R_MESH["ROOM = MESH<br/>2DGS / PGSR → FBX (Nanite)"]:::keeper
+    G1 -->|"both (dreamlab choice)"| R_BOTH["ROOM = SPLAT hero + MESH asset"]:::keeper
+
+    PROF --> G2{"Sharpness?"}:::gate
+    G2 -->|"sharp / moderate"| S_OK["full quality available"]:::keeper
+    G2 -->|"uniform motion blur"| S_BLUR["BLUR-LIMITED<br/>keep sharpest-per-window · 3dgs-deblur / VGGSfM (marginal)<br/>CEILING = recapture 4K short-shutter · NOT ArtiFixer"]:::warn
+
+    PROF --> G3{"Coverage?"}:::gate
+    G3 -->|"dense, 0% under-observed"| C_OK["no enhancer"]:::keeper
+    G3 -->|"holes / floaters"| C_HOLE["FLOATER-LIMITED<br/>+ ArtiFixer enhance (opacity-mix fills under-observed)"]:::opt
+
+    PROF --> G4{"Capture hardware?"}:::gate
+    G4 -->|"RGB only"| H_RGB["COLMAP / VGGSfM"]:::keeper
+    G4 -->|"depth sensor (iPhone LiDAR)"| H_DEPTH["+ AGS-Mesh (sensor-depth mesh)"]:::opt
+    G4 -->|"event camera"| H_EVENT["+ EBAD-Gaussian (severe-blur fix)"]:::opt
+
+    PROF --> OBJ["OBJECTS (always)<br/>SAM3 → per-object PLY → TRELLIS.2 hull_e2e → FBX<br/>(satisfies the polygonal-mesh mandate)"]:::keeper
+
+    R_SPLAT --> ASM{{"ASSEMBLE in UE 5.8<br/>room rep + embedded object FBXs + proxy collision"}}:::keeper
+    R_MESH --> ASM
+    R_BOTH --> ASM
+    S_BLUR --> ASM
+    C_HOLE --> ASM
+    H_DEPTH --> ASM
+    H_EVENT --> ASM
+    OBJ --> ASM
+    ASM --> OUT[/"Capture-tuned UE scene"/]:::io
+
+    classDef io fill:#0d47a1,stroke:#90caf9,color:#fff
+    classDef keeper fill:#1b5e20,stroke:#66bb6a,color:#fff
+    classDef gate fill:#4a148c,stroke:#ce93d8,color:#fff
+    classDef profile fill:#006064,stroke:#80deea,color:#fff
+    classDef warn fill:#bf360c,stroke:#ff8a65,color:#fff
+    classDef opt fill:#f9a825,stroke:#fff176,color:#000
