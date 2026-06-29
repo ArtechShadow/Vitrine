@@ -3,121 +3,141 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Vitrine — 20-slide deck</title>
+<title>Vitrine — A Capture-Adaptive Video → 3D Pipeline for UE 5.8</title>
 <!--
-  Vitrine — 20-slide overview deck.
+  Vitrine — 20-slide TECHNICAL deck. Built to docs/slide-deck.md.
   Self-contained: no external dependencies, no build step. Open in any browser.
-  Navigate:  ← →  ·  Space  ·  Home / End  ·  F fullscreen  ·  P print→PDF
-  Each <section class="slide"> is ONE slide and maps 1:1 to a row in the
-  "Vitrine — 20-Slide Deck Outline" Google Sheet. To trim, delete the slide
-  block whose data-slide number matches the Sheet row you cut, then the deck
-  re-numbers itself automatically.
+  Images are referenced relatively from docs/renders/ (../renders/...).
+  Navigate:  ← →  ·  Space  ·  Home / End  ·  N speaker-notes  ·  F fullscreen  ·  P print→PDF
+  Each <section class="slide"> is ONE slide; data-sec is the section label shown in the footer.
+  Facts re-derived from report/v5/sec_results.tex + docs/engineering-log.md (source of truth).
 -->
 <style>
   :root{
-    --green:#3ECC5F; --green-bright:#44D860; --yellow:#FFFF50;
-    --blue:#0d47a1; --blue-light:#90caf9; --purple:#4a148c; --purple-light:#ce93d8;
-    --bg:#0b0f14; --bg-2:#10161e; --panel:#161d27; --panel-2:#1d2733;
-    --ink:#eef3f8; --ink-dim:#9fb0c0; --line:#26323f;
+    --navy:#0d1b2a; --navy-2:#0f2336; --panel:#122a40; --panel-2:#0e2236;
+    --teal:#26c6da; --teal-dim:#1aa3b5; --blue:#0d47a1; --blue-light:#5a8fd6;
+    --ink:#eaf2f8; --ink-dim:#9db4c6; --line:#1d3a52; --warn:#ffca5f;
     --mono:"SF Mono",ui-monospace,"Cascadia Code","JetBrains Mono",Menlo,Consolas,monospace;
     --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%}
-  body{background:var(--bg);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased;overflow:hidden}
+  body{background:#06121d;color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased;overflow:hidden}
 
   .deck{position:fixed;inset:0}
   .slide{
-    position:absolute;inset:0;display:none;flex-direction:column;padding:5.6vh 7vw 8.5vh;
+    position:absolute;inset:0;display:none;flex-direction:column;padding:5.4vh 6.4vw 8.4vh;
     background:
-      radial-gradient(1200px 600px at 85% -10%, rgba(62,204,95,.10), transparent 60%),
-      radial-gradient(900px 500px at -5% 110%, rgba(74,20,140,.18), transparent 60%),
-      linear-gradient(180deg,var(--bg),var(--bg-2));
+      radial-gradient(1100px 560px at 88% -12%, rgba(38,198,218,.10), transparent 60%),
+      radial-gradient(900px 520px at -8% 112%, rgba(13,71,161,.22), transparent 60%),
+      linear-gradient(180deg,var(--navy),var(--navy-2));
     animation:fade .4s ease;
   }
   .slide.active{display:flex}
   @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 
-  .kicker{font-family:var(--mono);font-size:.76rem;letter-spacing:.18em;text-transform:uppercase;color:var(--green);
-    margin-bottom:1rem;display:flex;align-items:center;gap:.7rem}
-  .kicker::before{content:"";width:26px;height:2px;background:var(--green);display:inline-block}
-  h1{font-size:clamp(2.3rem,5.2vw,4.4rem);line-height:1.02;letter-spacing:-.02em;font-weight:800}
-  h2{font-size:clamp(1.6rem,3.3vw,2.8rem);line-height:1.06;letter-spacing:-.02em;font-weight:750;margin-bottom:.3rem}
-  .lede{font-size:clamp(1.02rem,1.6vw,1.4rem);color:var(--ink-dim);max-width:62ch;line-height:1.5;margin-top:1.1rem}
+  .kicker{font-family:var(--mono);font-size:.74rem;letter-spacing:.18em;text-transform:uppercase;color:var(--teal);
+    margin-bottom:.9rem;display:flex;align-items:center;gap:.7rem}
+  .kicker::before{content:"";width:24px;height:2px;background:var(--teal);display:inline-block}
+  h1{font-size:clamp(2.2rem,5vw,4.2rem);line-height:1.03;letter-spacing:-.02em;font-weight:800}
+  h2{font-size:clamp(1.55rem,3.2vw,2.7rem);line-height:1.07;letter-spacing:-.02em;font-weight:750;margin-bottom:.3rem}
+  h2 .accent,h1 .accent{color:var(--teal)}
+  .lede{font-size:clamp(1rem,1.55vw,1.35rem);color:var(--ink-dim);max-width:64ch;line-height:1.5;margin-top:1rem}
   p{line-height:1.55}
-  .accent{color:var(--green-bright)} .accent-y{color:var(--yellow)} .mono{font-family:var(--mono)}
-  .grow{flex:1;display:flex;flex-direction:column;justify-content:center}
+  .accent{color:var(--teal)} .accent-b{color:var(--blue-light)} .mono{font-family:var(--mono)}
+  .grow{flex:1;display:flex;flex-direction:column;justify-content:center;min-height:0}
 
-  .cols{display:grid;gap:1.4rem;margin-top:1.6rem}
+  .cols{display:grid;gap:1.3rem;margin-top:1.4rem}
   .c2{grid-template-columns:1fr 1fr} .c3{grid-template-columns:repeat(3,1fr)} .c4{grid-template-columns:repeat(4,1fr)}
+  .c-3-2{grid-template-columns:3fr 2fr} .c-2-3{grid-template-columns:2fr 3fr}
+  .mt0{margin-top:0}
 
-  .card{background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--line);border-radius:15px;padding:1.15rem 1.3rem}
-  .card h3{font-size:1.02rem;margin-bottom:.4rem;display:flex;align-items:center;gap:.55rem}
-  .card p{font-size:.93rem;color:var(--ink-dim)}
+  .card{background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--line);border-radius:14px;padding:1.05rem 1.2rem}
+  .card h3{font-size:1rem;margin-bottom:.4rem;display:flex;align-items:center;gap:.5rem}
+  .card p{font-size:.9rem;color:var(--ink-dim);line-height:1.45}
   .dot{width:9px;height:9px;border-radius:50%;flex:none}
-  .d-green{background:var(--green)} .d-blue{background:var(--blue-light)} .d-yellow{background:var(--yellow)} .d-purple{background:var(--purple-light)}
+  .d-teal{background:var(--teal)} .d-blue{background:var(--blue-light)} .d-warn{background:var(--warn)} .d-ink{background:var(--ink-dim)}
 
-  ul.clean{list-style:none;display:flex;flex-direction:column;gap:.8rem;margin-top:1.3rem}
-  ul.clean li{display:flex;gap:.8rem;font-size:1.06rem;line-height:1.4}
-  ul.clean li::before{content:"▸";color:var(--green)}
+  ul.clean{list-style:none;display:flex;flex-direction:column;gap:.7rem;margin-top:1.1rem}
+  ul.clean li{display:flex;gap:.75rem;font-size:1.02rem;line-height:1.4}
+  ul.clean li::before{content:"▸";color:var(--teal)}
   ul.clean li b{color:var(--ink)} ul.clean li span{color:var(--ink-dim)}
+  ul.tight li{font-size:.97rem}
 
-  .flow{display:flex;align-items:stretch;gap:.6rem;margin-top:1.8rem;flex-wrap:wrap}
-  .node{flex:1;min-width:140px;background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--line);border-radius:13px;padding:.95rem 1rem}
-  .node .t{font-family:var(--mono);font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;color:var(--green);margin-bottom:.45rem}
-  .node .b{font-size:.92rem;line-height:1.35;color:var(--ink)}
-  .node.io{background:linear-gradient(180deg,#0d2f63,#0a2350);border-color:#1c4f9c}
+  .flow{display:flex;align-items:stretch;gap:.55rem;margin-top:1.4rem;flex-wrap:wrap}
+  .node{flex:1;min-width:120px;background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--line);border-radius:12px;padding:.85rem .95rem}
+  .node .t{font-family:var(--mono);font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;color:var(--teal);margin-bottom:.4rem}
+  .node .b{font-size:.88rem;line-height:1.32;color:var(--ink)}
+  .node.io{background:linear-gradient(180deg,#0d3a73,#0a2b57);border-color:#1d5aa8}
   .node.io .t{color:var(--blue-light)}
-  .arrow{display:flex;align-items:center;color:var(--green);font-size:1.3rem;font-weight:700}
+  .arrow{display:flex;align-items:center;color:var(--teal);font-size:1.25rem;font-weight:700}
 
-  table{width:100%;border-collapse:collapse;margin-top:1.3rem;font-size:.95rem}
-  th,td{text-align:left;padding:.62rem .9rem;border-bottom:1px solid var(--line);vertical-align:top}
-  th{font-family:var(--mono);font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;color:var(--green);font-weight:600}
+  table{width:100%;border-collapse:collapse;margin-top:1.1rem;font-size:.92rem}
+  th,td{text-align:left;padding:.55rem .85rem;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-family:var(--mono);font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;color:var(--teal);font-weight:600}
   td:first-child{font-weight:650;white-space:nowrap;color:var(--ink)}
-  td:last-child{color:var(--ink-dim)}
   tr:last-child td{border-bottom:none}
+  td.ok{color:#7ee0a0} td.bad{color:#ff8f8f}
 
-  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:1.5rem;margin-top:1.8rem}
-  .stat .n{font-size:clamp(1.9rem,3.8vw,3rem);font-weight:800;letter-spacing:-.02em;color:var(--green-bright)}
-  .stat .l{color:var(--ink-dim);font-size:.95rem;margin-top:.3rem;line-height:1.4}
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:1.3rem;margin-top:1.4rem}
+  .stat{background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--line);border-radius:14px;padding:1.1rem 1.2rem}
+  .stat .n{font-size:clamp(1.7rem,3.4vw,2.7rem);font-weight:800;letter-spacing:-.02em;color:var(--teal)}
+  .stat .l{color:var(--ink-dim);font-size:.9rem;margin-top:.25rem;line-height:1.4}
 
-  .pill{display:inline-block;font-family:var(--mono);font-size:.72rem;letter-spacing:.05em;padding:.26rem .68rem;
-    border:1px solid var(--line);border-radius:999px;color:var(--ink-dim);margin:.2rem .35rem .2rem 0}
-  .pill.on{color:var(--green-bright);border-color:rgba(68,216,96,.45);background:rgba(68,216,96,.08)}
+  .pill{display:inline-block;font-family:var(--mono);font-size:.7rem;letter-spacing:.04em;padding:.24rem .64rem;
+    border:1px solid var(--line);border-radius:999px;color:var(--ink-dim);margin:.18rem .32rem .18rem 0}
+  .pill.on{color:var(--teal);border-color:rgba(38,198,218,.45);background:rgba(38,198,218,.08)}
+  .pill.blue{color:var(--blue-light);border-color:rgba(90,143,214,.45);background:rgba(13,71,161,.16)}
 
-  .brandmark{display:flex;align-items:center;gap:1.05rem;margin-bottom:2rem}
-  .brandmark .logo{width:52px;height:52px;border-radius:13px;background:var(--green);display:grid;place-items:center;
-    box-shadow:0 0 0 1px rgba(255,255,255,.06),0 14px 40px rgba(62,204,95,.25)}
-  .brandmark .logo span{font-weight:800;color:#06210f;font-size:1.65rem}
-  .brandmark .name{font-weight:700;letter-spacing:.02em;font-size:1.12rem}
-  .brandmark .name small{display:block;color:var(--ink-dim);font-weight:500;font-size:.8rem;letter-spacing:.04em}
-  .titlemeta{display:flex;gap:1.3rem;flex-wrap:wrap;margin-top:2.2rem;color:var(--ink-dim);font-family:var(--mono);font-size:.83rem}
-  .titlemeta b{color:var(--green-bright)}
+  /* images */
+  figure{margin:0;border:1px solid var(--line);border-radius:13px;overflow:hidden;background:#081726;position:relative}
+  figure img{display:block;width:100%;height:100%;object-fit:cover}
+  figcaption{position:absolute;left:0;right:0;bottom:0;font-family:var(--mono);font-size:.68rem;letter-spacing:.04em;
+    color:var(--ink);padding:.5rem .7rem;background:linear-gradient(0deg,rgba(6,18,29,.92),transparent)}
+  .imgrow{display:grid;gap:.8rem;margin-top:1.1rem}
+  .imgrow figure{height:38vh}
+  .sideimg{height:62vh}
+  .miss{display:grid;place-items:center;color:#4f6b82;font-family:var(--mono);font-size:.8rem;min-height:160px;text-align:center;padding:1rem}
 
-  /* full-bleed section divider slides */
-  .slide.divider{justify-content:center}
-  .slide.divider .secnum{font-family:var(--mono);color:var(--green);font-size:1rem;letter-spacing:.2em}
-  .slide.divider h2{font-size:clamp(2.4rem,6vw,5rem);margin-top:.6rem}
+  /* full-bleed hero / image slides */
+  .slide.hero{padding:0;justify-content:flex-end}
+  .slide.hero .bg{position:absolute;inset:0;z-index:0}
+  .slide.hero .bg img{width:100%;height:100%;object-fit:cover;opacity:.9}
+  .slide.hero .scrim{position:absolute;inset:0;background:linear-gradient(0deg,rgba(6,18,29,.96) 6%,rgba(6,18,29,.30) 46%,rgba(6,18,29,.55) 100%);z-index:1}
+  .slide.hero .inner{position:relative;z-index:2;padding:0 6.4vw 9vh}
 
-  .callout{margin-top:1.3rem;border-left:3px solid var(--yellow);background:rgba(255,255,80,.05);
-    padding:.9rem 1.1rem;border-radius:0 10px 10px 0;color:var(--ink-dim);font-size:.98rem}
+  .callout{margin-top:1.1rem;border-left:3px solid var(--warn);background:rgba(255,202,95,.06);
+    padding:.8rem 1rem;border-radius:0 10px 10px 0;color:var(--ink-dim);font-size:.92rem}
   .callout b{color:var(--ink)}
+  .twobox{display:flex;align-items:stretch;gap:.8rem;margin-top:1.2rem}
+  .twobox .b{flex:1;border-radius:13px;padding:1rem 1.15rem;border:1px solid var(--line)}
+  .twobox .prod{background:linear-gradient(180deg,#0e3358,#0b2748);border-color:#1d5aa8}
+  .twobox .tool{background:linear-gradient(180deg,var(--panel),var(--panel-2))}
+  .twobox .x{display:flex;align-items:center;color:var(--teal);font-size:1.4rem}
 
-  .foot{position:absolute;left:7vw;right:7vw;bottom:3.4vh;display:flex;justify-content:space-between;align-items:center;
-    font-family:var(--mono);font-size:.72rem;color:var(--ink-dim);letter-spacing:.06em}
-  .foot .brand{color:var(--green)}
-  .foot .sec{text-transform:uppercase;letter-spacing:.14em}
-  .progress{position:fixed;left:0;bottom:0;height:3px;background:linear-gradient(90deg,var(--green),var(--green-bright));transition:width .35s ease;z-index:50}
-  .nav{position:fixed;right:18px;bottom:14px;display:flex;gap:8px;z-index:60}
-  .nav button{font-family:var(--mono);background:var(--panel-2);color:var(--ink);border:1px solid var(--line);border-radius:9px;width:34px;height:30px;cursor:pointer;font-size:1rem;line-height:1}
-  .nav button:hover{border-color:var(--green);color:var(--green)}
-  .hint{position:fixed;left:14px;bottom:14px;font-family:var(--mono);font-size:.66rem;color:#4a5a6b;z-index:60}
+  .foot{position:absolute;left:6.4vw;right:6.4vw;bottom:3.2vh;display:flex;justify-content:space-between;align-items:center;
+    font-family:var(--mono);font-size:.7rem;color:var(--ink-dim);letter-spacing:.05em;z-index:3}
+  .foot .brand{color:var(--teal)}
+  .foot .sec{text-transform:uppercase;letter-spacing:.13em;color:#6b8499}
+  .progress{position:fixed;left:0;bottom:0;height:3px;background:linear-gradient(90deg,var(--teal),var(--blue-light));transition:width .35s ease;z-index:50}
+  .nav{position:fixed;right:16px;bottom:13px;display:flex;gap:7px;z-index:60}
+  .nav button{font-family:var(--mono);background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;width:33px;height:29px;cursor:pointer;font-size:1rem;line-height:1}
+  .nav button:hover{border-color:var(--teal);color:var(--teal)}
+  .hint{position:fixed;left:13px;bottom:13px;font-family:var(--mono);font-size:.64rem;color:#3f5a70;z-index:60}
+
+  /* speaker notes (toggle N) */
+  .notes{display:none;position:fixed;left:0;right:0;bottom:0;max-height:42vh;overflow:auto;z-index:70;
+    background:rgba(6,16,26,.97);border-top:2px solid var(--teal);padding:1.1rem 6.4vw 1.4rem;
+    font-size:.92rem;line-height:1.5;color:var(--ink-dim)}
+  body.show-notes .notes.active{display:block}
+  .notes h4{font-family:var(--mono);font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;color:var(--teal);margin-bottom:.4rem}
 
   @media print{
     @page{size:1280px 720px;margin:0}
     body{overflow:visible}
     .slide{display:flex !important;position:relative;inset:auto;page-break-after:always;height:720px;width:1280px}
-    .nav,.hint,.progress{display:none}
+    .slide.hero{display:flex !important}
+    .nav,.hint,.progress,.notes{display:none !important}
   }
 </style>
 </head>
@@ -125,348 +145,398 @@
 <div class="deck" id="deck">
 
   <!-- 1 — TITLE -->
-  <section class="slide active" data-sec="Open">
-    <div class="brandmark">
-      <div class="logo"><span>V</span></div>
-      <div class="name">Vitrine<small>capture-adaptive video → 3D → game engine</small></div>
+  <section class="slide hero" data-sec="Title">
+    <div class="bg"><img src="../renders/08b_capture_adaptive_pipeline_hero_nanobanana.jpg" alt="" onerror="this.style.display='none'"></div>
+    <div class="scrim"></div>
+    <div class="inner">
+      <div class="kicker">University of Salford · DreamLab AI · 2026</div>
+      <h1>Vitrine</h1>
+      <p class="lede" style="font-size:clamp(1.1rem,1.9vw,1.6rem);color:var(--ink);max-width:70ch">A capture-adaptive video&nbsp;→&nbsp;structured-3D-scene pipeline for <span class="accent">Unreal Engine 5.8</span>.</p>
+      <p class="lede" style="margin-top:.8rem">Point it at video of a room; get an editable, textured 3D scene — room + object game-assets — in UE 5.8.</p>
+      <div style="margin-top:1.6rem;font-family:var(--mono);font-size:.85rem;color:var(--ink-dim)">Dr John O'Hare &nbsp;·&nbsp; University of Salford &nbsp;·&nbsp; DreamLab AI</div>
     </div>
-    <div class="grow">
-      <h1>Turn ordinary video of a real space into a structured, game-ready <span class="accent">3D scene</span> in Unreal&nbsp;Engine&nbsp;5.8.</h1>
-      <p class="lede">Point Vitrine at a video of a room. It diagnoses the capture, routes it to the reconstruction path that fits the data, and delivers the room plus individually reconstructed, correctly-placed, textured object assets.</p>
-    </div>
-    <div class="titlemeta">
-      <span>Agent-orchestrated</span><span>·</span>
-      <span>Real Gaussian splats <b>and</b> clean meshes</span><span>·</span>
-      <span>UE 5.8 game assets · Nanite-ready</span>
-    </div>
+    <div class="foot"><span class="brand">VITRINE</span><span class="sec">DreamLab AI / University of Salford · 2026</span></div>
+    <aside class="notes" data-for="1"><h4>Speaker notes</h4>Frame Vitrine as a standalone pipeline whose single job is real-video-to-game-engine. Not a research demo of pretty splats — the output is editable, textured game assets an artist can use in UE 5.8.</aside>
   </section>
 
-  <!-- 2 — ONE SENTENCE -->
-  <section class="slide" data-sec="Open">
-    <div class="kicker">What it is</div>
-    <h2>In one sentence.</h2>
-    <div class="grow">
-      <p style="font-size:clamp(1.4rem,2.6vw,2.2rem);line-height:1.32;font-weight:600;max-width:24ch">
-        Point Vitrine at video of a room and its contents; it produces a UE&nbsp;5.8 scene — the room
-        <span class="accent">plus individually reconstructed, correctly-placed, textured object meshes</span>.</p>
-      <div style="margin-top:1.6rem">
-        <span class="pill on">room: real splat &amp;/or clean mesh</span>
-        <span class="pill on">objects: game-style FBX, baked materials</span>
-        <span class="pill">optional .ksplat for web</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- 3 — CAPTURES FAIL -->
+  <!-- 2 — PROBLEM -->
   <section class="slide" data-sec="Problem">
     <div class="kicker">The problem</div>
-    <h2>Real captures fail in different ways.</h2>
-    <p class="lede">There is no universal "best path" — <span class="accent">the best path is a function of the data.</span></p>
-    <div class="cols c4">
-      <div class="card"><h3><span class="dot d-green"></span>Motion blur</h3><p>Hand-held capture smears detail; naïve training bakes the blur into the surface.</p></div>
-      <div class="card"><h3><span class="dot d-blue"></span>Sparse coverage</h3><p>Too few views in places — geometry collapses to noise or floaters.</p></div>
-      <div class="card"><h3><span class="dot d-yellow"></span>Holes</h3><p>Unobserved regions leave gaps a single fixed pipeline can't fill.</p></div>
-      <div class="card"><h3><span class="dot d-purple"></span>No depth</h3><p>Commodity phone video, no LiDAR — structure inferred from motion alone.</p></div>
-    </div>
-  </section>
-
-  <!-- 4 — WHY A FIXED PIPELINE BREAKS -->
-  <section class="slide" data-sec="Problem">
-    <div class="kicker">Why it's hard</div>
-    <h2>Why a single fixed pipeline breaks.</h2>
-    <p class="lede">One config can't be optimal across blur, sparsity, holes and missing depth at the same time.</p>
-    <ul class="clean">
-      <li><span>Naïve training <b>bakes blur into the surface</b>.</span></li>
-      <li><span>Sparse views <b>collapse geometry into floaters</b>.</span></li>
-      <li><span>Unobserved regions <b>leave gaps</b> a fixed path can't fill.</span></li>
-      <li><span>Net result: <b>brittle, capture-dependent quality</b>.</span></li>
-    </ul>
-    <div class="callout">A pipeline tuned for one failure mode breaks on the next. The fix isn't a better single path — it's choosing the path per capture.</div>
-  </section>
-
-  <!-- 5 — ROUTING (core idea) -->
-  <section class="slide" data-sec="Solution">
-    <div class="kicker">The core idea</div>
-    <h2>Capture-adaptive, multi-pipeline routing.</h2>
-    <div class="grow">
-      <p style="font-size:clamp(1.5rem,3vw,2.4rem);line-height:1.25;font-weight:650;max-width:22ch">
-        <span class="accent">Diagnose</span> each capture and <span class="accent-y">route</span> it to the reconstruction path that best fits its bottleneck.</p>
-      <ul class="clean">
-        <li><span>Vitrine is <b>not</b> a single fixed pipeline.</span></li>
-        <li><span>A menu of <b>validated components</b> + capture-conditional enhancers.</span></li>
-        <li><span>The router selects the config from the <b>capture profile</b>.</span></li>
-      </ul>
-    </div>
-  </section>
-
-  <!-- 6 — DELIVERABLE -->
-  <section class="slide" data-sec="Solution">
-    <div class="kicker">The deliverable</div>
-    <h2>A UE 5.8 scene — room <span class="accent-y">+</span> objects, as game assets.</h2>
+    <h2>"A pretty splat" is not "an asset an artist can use."</h2>
+    <p class="lede">Turning ordinary handheld video of a real space into a <i>usable, editable</i> 3D scene in a game engine is unsolved end-to-end. The last mile — from radiance field to game-ready, textured, separable meshes — is where it breaks.</p>
     <div class="cols c2">
-      <div class="card">
-        <h3><span class="dot d-green"></span>The room</h3>
-        <p style="margin-bottom:.75rem">A <b style="color:var(--ink)">real Gaussian splat</b> via the NanoGS UE plugin <b>and/or</b> a clean polygonal <b style="color:var(--ink)">mesh</b> (2DGS / PGSR / TSDF → FBX, Nanite-ready).</p>
-        <span class="pill on">NanoGS — real Gaussians</span><span class="pill on">2DGS surface mesh</span>
+      <div class="card"><h3><span class="dot d-teal"></span>Where it's needed</h3><p>Cultural-heritage preservation · immersive / mixed reality · virtual production · digital twins of real spaces.</p></div>
+      <div class="card"><h3><span class="dot d-warn"></span>Why it's hard</h3><p>Messy handheld capture · photogrammetry gaps · splats aren't game-ready meshes · manual cleanup dominates the cost.</p></div>
+    </div>
+    <p class="lede" style="margin-top:1.3rem">The gap is structural: a radiance field looks good but a game engine wants <b class="accent">textured, separable, correctly-placed meshes</b>.</p>
+    <div class="foot"><span class="brand">VITRINE</span><span class="sec">02 / 20 · Problem</span></div>
+    <aside class="notes" data-for="2"><h4>Speaker notes</h4>Emphasize the gap between "a pretty splat" and "an asset an artist can use". The whole project is about closing that last mile reliably, across captures of wildly varying quality.</aside>
+  </section>
+
+  <!-- 3 — DELIVERABLE -->
+  <section class="slide" data-sec="Deliverable">
+    <div class="kicker">The deliverable — output before the how</div>
+    <h2>A textured polygonal scene for UE 5.8.</h2>
+    <div class="cols c-3-2" style="flex:1;min-height:0">
+      <div>
+        <ul class="clean">
+          <li><span><b>A room</b> — clean mesh and/or a real Gaussian splat (NanoGS).</span></li>
+          <li><span><b>Object meshes</b> — individually reconstructed, correctly placed, textured.</span></li>
+          <li><span>Imported as <b>FBX game-assets</b> with baked-texture materials, Nanite-ready.</span></li>
+          <li><span>Optional compressed <b class="mono">.ksplat</b> for the web.</span></li>
+        </ul>
+        <div class="callout"><b>USD is optional / archival — not the deliverable.</b> The UE contract is FBX with a baked-texture material (see slide 14).</div>
       </div>
-      <div class="card">
-        <h3><span class="dot d-yellow"></span>The objects</h3>
-        <p style="margin-bottom:.75rem">Individually reconstructed, correctly-placed, textured meshes imported as <b style="color:var(--ink)">game-style assets</b>: FBX, baked materials, proxy collision.</p>
-        <span class="pill on">SAM3 → TRELLIS.2 → FBX</span><span class="pill">Hunyuan3D · SAM3D</span>
-      </div>
+      <figure class="sideimg"><img src="../renders/05_multi_object_composed.jpg" alt="Composed multi-object scene" onerror="this.parentNode.innerHTML='&lt;div class=miss&gt;docs/renders/05_multi_object_composed.jpg&lt;/div&gt;'"><figcaption>Composed scene — room + placed object assets</figcaption></figure>
     </div>
-    <p class="lede" style="margin-top:1.4rem">Not a point cloud, not a single fused blob — a <b class="accent">structured scene of separable, interactive assets</b>.</p>
+    <div class="foot"><span class="brand">VITRINE</span><span class="sec">03 / 20 · Deliverable</span></div>
+    <aside class="notes" data-for="3"><h4>Speaker notes</h4>The north star is game-style assets, not a research artifact. Show the output first so the rest of the deck reads as "how we get here". Objects are separable and re-placed at their real SfM coordinates.</aside>
   </section>
 
-  <!-- 7 — ROOM SPLAT -->
-  <section class="slide" data-sec="Solution">
-    <div class="kicker">Scene path · A</div>
-    <h2>Room → splat (NanoGS).</h2>
-    <p class="lede">Delivered faithfully as <span class="accent">real Gaussians</span> inside Unreal Engine 5.8.</p>
-    <div class="flow">
-      <div class="node"><div class="t">Train</div><div class="b">LichtFeld native 3DGS → .ply</div></div>
-      <div class="arrow">→</div>
-      <div class="node"><div class="t">Clean</div><div class="b">SuperSplat cleanup pass</div></div>
-      <div class="arrow">→</div>
-      <div class="node io"><div class="t">Deliver</div><div class="b">NanoGS plugin — real Gaussians in UE 5.8</div></div>
+  <!-- 4 — BIG IDEA: CAPTURE-ADAPTIVE ROUTING (HERO) -->
+  <section class="slide hero" data-sec="Thesis ★">
+    <div class="bg"><img src="../renders/08_capture_adaptive_pipeline_hero.png" alt="Capture-adaptive pipeline: Video → Diagnose → Route → Scene/Objects → UE 5.8" onerror="this.style.display='none'"></div>
+    <div class="scrim"></div>
+    <div class="inner">
+      <div class="kicker">The big idea</div>
+      <h2 style="max-width:24ch">Capture quality varies wildly — so one fixed pipeline fails.</h2>
+      <p class="lede" style="color:var(--ink)">Vitrine <b class="accent">DIAGNOSES</b> each capture — frame-QA (MUSIQ + directional sharpness), SfM success, coverage, hardware — then <b class="accent">ROUTES</b> to the recipe that fits: a SCENE branch (splat→UE or mesh→UE) and an always-on OBJECTS branch.</p>
     </div>
-    <div class="callout">The splat path is what carries a capture that's too blur-limited for a clean mesh. On the reference run, it's how the room ships faithfully.</div>
+    <div class="foot"><span class="brand">VITRINE</span><span class="sec">04 / 20 · Thesis</span></div>
+    <aside class="notes" data-for="4"><h4>Speaker notes</h4>"Route by bottleneck" is the core intellectual contribution; everything after this is detail under this one idea. The router reads a capture profile and selects components + conditional enhancers — it does not run a single fixed chain.</aside>
   </section>
 
-  <!-- 8 — ROOM MESH -->
-  <section class="slide" data-sec="Solution">
-    <div class="kicker">Scene path · B</div>
-    <h2>Room → mesh (2DGS / PGSR / TSDF).</h2>
-    <p class="lede">A clean polygonal surface as the game-asset alternative.</p>
-    <div class="cols c3">
-      <div class="card"><h3><span class="dot d-green"></span>Surface</h3><p>2DGS / PGSR SOTA surface extraction, or TSDF fusion.</p></div>
-      <div class="card"><h3><span class="dot d-blue"></span>Texture</h3><p>UV unwrap + texture-bake via xatlas.</p></div>
-      <div class="card"><h3><span class="dot d-yellow"></span>Asset</h3><p>FBX export — Nanite-ready polygonal room.</p></div>
-    </div>
-    <p class="lede" style="margin-top:1.3rem;font-size:1rem">Polygonal output is capture-bound — quality tracks the capture, not the voxel size (see slide 19).</p>
-  </section>
-
-  <!-- 9 — OBJECTS -->
-  <section class="slide" data-sec="Solution">
-    <div class="kicker">Object path</div>
-    <h2>Objects → textured game assets.</h2>
-    <p class="lede">Segment, reconstruct, texture, place — each object on its own.</p>
-    <div class="flow">
-      <div class="node io"><div class="t">Photo</div><div class="b">object in the scene</div></div>
-      <div class="arrow">→</div>
-      <div class="node"><div class="t">Segment</div><div class="b">SAM3 concept-segment</div></div>
-      <div class="arrow">→</div>
-      <div class="node"><div class="t">Reconstruct</div><div class="b">TRELLIS.2 <span class="mono">hull_e2e</span> · Hunyuan3D-2.1 · SAM3D</div></div>
-      <div class="arrow">→</div>
-      <div class="node io"><div class="t">Asset</div><div class="b">textured GLB → FBX</div></div>
-    </div>
-    <div class="callout">The most mature path — <b>fully met on the reference run</b>: chair, vacuum, toolbox via TRELLIS.2 <span class="mono">hull_e2e</span>.</div>
-  </section>
-
-  <!-- 10 — FLOW -->
-  <section class="slide" data-sec="How">
-    <div class="kicker">The architecture</div>
-    <h2>The flow: diagnose → route → deliver.</h2>
+  <!-- 5 — PIPELINE AT A GLANCE -->
+  <section class="slide" data-sec="Pipeline">
+    <div class="kicker">End to end, in one view</div>
+    <h2>The stage chain.</h2>
     <div class="flow">
       <div class="node io"><div class="t">Input</div><div class="b">Video of a room</div></div>
       <div class="arrow">→</div>
-      <div class="node"><div class="t">Diagnose</div><div class="b">frame-QA (MUSIQ + sharpness) · SfM · coverage · hardware</div></div>
+      <div class="node"><div class="t">QA</div><div class="b">frame extraction · MUSIQ + directional sharpness</div></div>
       <div class="arrow">→</div>
-      <div class="node"><div class="t">Route</div><div class="b">capture profile selects scene &amp; object configs</div></div>
+      <div class="node"><div class="t">Structure</div><div class="b">COLMAP SfM · ALIKED + LightGlue</div></div>
       <div class="arrow">→</div>
-      <div class="node io"><div class="t">Output</div><div class="b">UE 5.8 scene — room + object game-assets</div></div>
+      <div class="node"><div class="t">3DGS</div><div class="b">LichtFeld v0.5.3 · optional .ksplat</div></div>
     </div>
-    <div class="cols c3">
-      <div class="card"><h3><span class="dot d-green"></span>Scene → splat</h3><p>LichtFeld .ply → SuperSplat → NanoGS.</p></div>
-      <div class="card"><h3><span class="dot d-blue"></span>Scene → mesh</h3><p>2DGS / PGSR or TSDF → xatlas → FBX.</p></div>
-      <div class="card"><h3><span class="dot d-yellow"></span>Enhancers</h3><p>Capture-conditional, not always-on.</p></div>
+    <div class="flow">
+      <div class="node"><div class="t">Objects</div><div class="b">SAM3 segment · crop · TRELLIS.2 / Hunyuan3D-2.1 → GLB</div></div>
+      <div class="arrow">→</div>
+      <div class="node"><div class="t">Scene mesh</div><div class="b">CoMe / TSDF · MeshCleaner(smooth=0)</div></div>
+      <div class="arrow">→</div>
+      <div class="node"><div class="t">Bake</div><div class="b">xatlas UV · texture bake → FBX</div></div>
+      <div class="arrow">→</div>
+      <div class="node io"><div class="t">Deliver</div><div class="b">UE 5.8 import · Nanite</div></div>
     </div>
+    <p class="lede" style="margin-top:1.4rem">Each stage is a <b class="accent">swappable SOTA component</b>, not bespoke code — the router picks which ones run.</p>
+    <div class="foot"><span class="brand">VITRINE</span><span class="sec">05 / 20 · Pipeline</span></div>
+    <aside class="notes" data-for="5"><h4>Speaker notes</h4>Walk the chain left-to-right, top row then bottom. Stress that components are SOTA and swappable; the contribution is the routing and the integration into a game-ready FBX, not a new reconstruction algorithm.</aside>
   </section>
 
-  <!-- 11 — STAGE MENU -->
-  <section class="slide" data-sec="How">
-    <div class="kicker">Under the hood</div>
-    <h2>The stage menu.</h2>
-    <table>
-      <thead><tr><th>Stage</th><th>What runs</th></tr></thead>
-      <tbody>
-        <tr><td>Ingest + QA</td><td>Frame extraction → MUSIQ NR-IQA + full-res Laplacian sharpest-per-window selection</td></tr>
-        <tr><td>Structure</td><td>COLMAP SfM (ALIKED + LightGlue)</td></tr>
-        <tr><td>3DGS</td><td>LichtFeld native trainer (vendored) / CoMe / gsplat</td></tr>
-        <tr><td>Scene → splat</td><td>LichtFeld .ply → SuperSplat clean → NanoGS (UE 5.8, real Gaussians)</td></tr>
-        <tr><td>Scene → mesh</td><td>2DGS / PGSR (SOTA surface) or TSDF → texture-bake (xatlas) → FBX</td></tr>
-        <tr><td>Objects</td><td>SAM3 concept-segment → TRELLIS.2 <span class="mono">hull_e2e</span> / Hunyuan3D-2.1 / SAM3D → GLB → FBX</td></tr>
-        <tr><td>Delivery</td><td>UE 5.8 game-asset import (Nanite); embed object FBXs; proxy collision</td></tr>
-      </tbody>
-    </table>
-  </section>
-
-  <!-- 12 — DIAGNOSE DETAIL -->
-  <section class="slide" data-sec="How">
-    <div class="kicker">Deep dive</div>
-    <h2>Diagnose &amp; QA, in detail.</h2>
-    <p class="lede">Frame quality and structure are measured <span class="accent">before</span> anything is reconstructed.</p>
-    <div class="cols c2">
-      <div class="card"><h3><span class="dot d-green"></span>Frame quality</h3><p>MUSIQ no-reference image-quality scoring + full-res Laplacian sharpest-per-window frame selection.</p></div>
-      <div class="card"><h3><span class="dot d-blue"></span>Structure</h3><p>COLMAP SfM with ALIKED features + LightGlue matching.</p></div>
-      <div class="card"><h3><span class="dot d-yellow"></span>Coverage</h3><p>View distribution analysis flags under-observed regions.</p></div>
-      <div class="card"><h3><span class="dot d-purple"></span>Hardware</h3><p>Available GPU / VRAM profile feeds the router's config choice.</p></div>
+  <!-- 6 — STAGE: FRAME QUALITY -->
+  <section class="slide" data-sec="Stage · QA">
+    <div class="kicker">Stage 1 — quality is gated up front</div>
+    <h2>Ingest &amp; frame quality.</h2>
+    <div class="cols c2" style="flex:1;min-height:0;align-items:start">
+      <ul class="clean tight">
+        <li><span><b>pyiqa MUSIQ</b> NR-IQA — per-video drop-and-flag gate; garbage frames never reach SfM.</span></li>
+        <li><span><b>Full-resolution Laplacian</b> — blur metrics on 4K frames span <b class="accent">≈105×</b>; down-scaling to 960p collapses that to ≈1.6× and hides blur.</span></li>
+        <li><span><b>Directional sharpness (λ₂)</b> — structure-tensor minor eigenvalue; the <span class="mono">λ₂/λ₁ ≪ 1</span> signature tells motion blur from defocus/haze.</span></li>
+        <li><span><b>Sharpest-per-window FIFO sampler</b> — raised bottom-quartile sharpness <b class="accent">+20–38%</b> (median only +7–13%): it removes the floor, the frames that poison COLMAP.</span></li>
+      </ul>
+      <div>
+        <div class="card"><h3><span class="dot d-warn"></span>It cannot invent sharpness</h3><p>On uniformly blurry footage the gate issues a <b style="color:var(--ink)">recapture flag</b> rather than passing a degraded subset off as adequate. Four unit tests validate the directional metric (no-blur, horizontal, vertical, mixed).</p></div>
+      </div>
     </div>
+    <div class="foot"><span class="brand">VITRINE</span><span class="sec">06 / 20 · Stage</span></div>
+    <aside class="notes" data-for="6"><h4>Speaker notes</h4>This is where the pipeline earns its robustness. The full-res-vs-960p point is the crux: down-scaled blur metrics lie. Capture quality is the theme we return to on slide 19.</aside>
   </section>
 
-  <!-- 13 — ENHANCERS -->
-  <section class="slide" data-sec="How">
-    <div class="kicker">Conditional tools</div>
-    <h2>Capture-conditional enhancers.</h2>
-    <p class="lede">Extra tools fire <span class="accent">only when the capture needs them</span> — gated, evidence-driven, not a fixed post-process.</p>
-    <div class="cols c3">
-      <div class="card"><h3><span class="dot d-green"></span>ArtiFixer</h3><p>Regenerates floaters / holes / unobserved regions. Does <b style="color:var(--ink)">not</b> deblur.</p></div>
-      <div class="card"><h3><span class="dot d-blue"></span>Deblur</h3><p>Fires for motion-blurred captures.</p></div>
-      <div class="card"><h3><span class="dot d-yellow"></span>Densification</h3><p>Fires for sparse coverage.</p></div>
-    </div>
-  </section>
-
-  <!-- 14 — AGENT CONTROLLER -->
-  <section class="slide" data-sec="Agentic">
-    <div class="kicker">Where it's heading</div>
-    <h2>An internal agent controller owns the run.</h2>
-    <p class="lede">Vitrine is moving from scripted stages to an agent that drives the pipeline end-to-end.</p>
-    <div class="cols c4">
-      <div class="card"><h3><span class="dot d-purple"></span>Select</h3><p>Diagnose the capture, pick the config / router policy.</p></div>
-      <div class="card"><h3><span class="dot d-green"></span>Drive</h3><p>Operate each tool through its control surface.</p></div>
-      <div class="card"><h3><span class="dot d-blue"></span>Evaluate</h3><p>In-flight QA renders, MUSIQ, mesh/splat checks.</p></div>
-      <div class="card"><h3><span class="dot d-yellow"></span>Recover</h3><p>Restart-resilient lifecycles · phased VRAM.</p></div>
-    </div>
-    <div class="callout">Plus fan-out: sub-agent meshes choose SOTA components and <b>adversarially verify</b> results before committing.</div>
-  </section>
-
-  <!-- 15 — CONTROL SURFACES -->
-  <section class="slide" data-sec="Agentic">
-    <div class="kicker">It's real, not vapor</div>
-    <h2>Tool control surfaces.</h2>
-    <p class="lede">The controller drives real tools over interfaces that already exist.</p>
-    <div class="cols c3">
-      <div class="card"><h3><span class="dot d-green"></span>LichtFeld</h3><p>Vendored MCP server <span class="mono">:45677</span> — native 3DGS train / render / edit.</p></div>
-      <div class="card"><h3><span class="dot d-blue"></span>ComfyUI</h3><p><span class="mono">:8188</span> — FLUX.2 / TRELLIS.2 / Hunyuan3D / SAM3D.</p></div>
-      <div class="card"><h3><span class="dot d-yellow"></span>Unreal 5.8</h3><p>Remote Control <span class="mono">:30010</span> + MCP <span class="mono">:8000</span>.</p></div>
-    </div>
-  </section>
-
-  <!-- 16 — DOCKER -->
-  <section class="slide" data-sec="System">
-    <div class="kicker">The system</div>
-    <h2>A consolidated GPU stack.</h2>
-    <p class="lede">The host owns and rebuilds the GPU containers; the agent controller drives them by service name.</p>
-    <table>
-      <thead><tr><th>Container</th><th>GPU</th><th>Purpose</th></tr></thead>
-      <tbody>
-        <tr><td>gaussian-toolkit</td><td>0</td><td>COLMAP · 3DGS · web UI · vendored LichtFeld MCP · Blender · SAM3 · orchestrator</td></tr>
-        <tr><td>vitrine-comfyui</td><td>0</td><td>Owner ComfyUI — FLUX.2 / TRELLIS.2 / Hunyuan3D-2.1 / SAM3D</td></tr>
-        <tr><td>milo / come</td><td>1</td><td>Mesh extraction backends</td></tr>
-        <tr><td>unreal <span class="mono" style="color:var(--ink-dim)">(overlay)</span></td><td>1</td><td>UE 5.8 — splat / mesh assembly + render</td></tr>
-        <tr><td>unreal-mcp-bridge</td><td>—</td><td>HTTP proxy :9100 over the UE control surfaces</td></tr>
-      </tbody>
-    </table>
-    <p class="lede" style="margin-top:1rem;font-size:.96rem"><b class="accent">Networks:</b> <span class="mono">v2g-net</span> internal bus · <span class="mono">visionclaw_network</span> shared with VisionFlow + agentbox.</p>
-  </section>
-
-  <!-- 17 — LICHTFELD -->
-  <section class="slide" data-sec="System">
-    <div class="kicker">Architecture principle</div>
-    <h2>LichtFeld is a tool, not the trunk.</h2>
-    <div class="cols c2">
-      <div style="display:flex;flex-direction:column;justify-content:center">
-        <p class="lede" style="margin-top:0">Vitrine vendors <b class="accent">LichtFeld Studio</b> as a pinned dependency for native 3DGS. Vitrine <i>calls</i> it — it is no longer a fork.</p>
+  <!-- 7 — STAGE: SfM -->
+  <section class="slide" data-sec="Stage · SfM">
+    <div class="kicker">Stage 2 — camera geometry</div>
+    <h2>Structure-from-Motion (COLMAP).</h2>
+    <div class="cols c-3-2" style="flex:1;min-height:0;align-items:start">
+      <div>
         <ul class="clean">
-          <li><span><b>Never modified</b> — updates are a submodule tag bump.</span></li>
-          <li><span>Its <b>MCP server</b> is the primary 3DGS interface.</span></li>
-          <li><span>UE delivery uses <b>our</b> mesh/splat → FBX/NanoGS path.</span></li>
+          <li><span><b>COLMAP</b> SfM with modern features — <b class="accent">ALIKED</b> keypoints + <b class="accent">LightGlue</b> matching.</span></li>
+          <li><span>Robust to the wide-baseline handheld captures where classic SIFT struggles.</span></li>
+          <li><span>Produces camera poses + a sparse cloud that anchor everything downstream.</span></li>
         </ul>
-      </div>
-      <div class="card" style="display:flex;flex-direction:column;justify-content:center;gap:1rem">
-        <div class="mono" style="color:var(--ink-dim);font-size:.88rem;line-height:1.7">
-          <span style="color:var(--green)">vendor/lichtfeld-studio/</span><br>
-          &nbsp;&nbsp;git submodule<br>
-          &nbsp;&nbsp;pinned @ <span class="accent-y">v0.5.3</span><br>
-          &nbsp;&nbsp;native 3DGS train · render · MCP
+        <div class="stats" style="grid-template-columns:1fr 1fr">
+          <div class="stat"><div class="n">600/600</div><div class="l">dreamlab frames registered</div></div>
+          <div class="stat"><div class="n">1.03&nbsp;px</div><div class="l">mean re-projection error</div></div>
         </div>
-        <hr style="border:none;border-top:1px solid var(--line)">
-        <p style="color:var(--ink-dim);font-size:.9rem">Killer fact: LichtFeld's native USD export emits a <span class="mono">ParticleField</span> UE can't import — so the UE path is deliberately ours.</p>
+      </div>
+      <div class="card" style="align-self:stretch;display:flex;flex-direction:column;justify-content:center">
+        <p style="color:var(--ink-dim)"><b style="color:var(--ink)">One coordinate frame.</b> The poses are the shared frame for splats, meshes, and object placement — coherent whole-room coverage, not fragmented sub-models.</p>
       </div>
     </div>
+    <div class="foot"><span class="brand">VITRINE</span><span class="sec">07 / 20 · Stage</span></div>
+    <aside class="notes" data-for="7"><h4>Speaker notes</h4>Poses are the shared coordinate frame for everything: the splat, the scene mesh, and where each reconstructed object gets placed. 600/600 registration on dreamlab means SfM is not the bottleneck here — sharpness is.</aside>
   </section>
 
-  <!-- 18 — STATUS -->
-  <section class="slide" data-sec="Status">
-    <div class="kicker">Status</div>
-    <h2>Dreamlab end-to-end — the reference run.</h2>
-    <div class="stats">
-      <div class="stat"><div class="n">3 / 3</div><div class="l">Objects met via TRELLIS.2 <span class="mono">hull_e2e</span> — chair, vacuum, toolbox.</div></div>
-      <div class="stat"><div class="n">Splat ✓</div><div class="l">Room delivered faithfully via the recompiled NanoGS UE 5.8 plugin.</div></div>
-      <div class="stat"><div class="n">2DGS</div><div class="l">Surface mesh stands as the polygonal-asset alternative.</div></div>
+  <!-- 8 — STAGE: 3DGS -->
+  <section class="slide" data-sec="Stage · 3DGS">
+    <div class="kicker">Stage 3 — the radiance representation</div>
+    <h2>3D Gaussian Splatting — LichtFeld Studio.</h2>
+    <div class="cols c-2-3" style="flex:1;min-height:0;align-items:start">
+      <div>
+        <ul class="clean">
+          <li><span>Native <b>C++23 / CUDA 3DGS</b> training via vendored <b class="accent">LichtFeld Studio v0.5.3</b>.</span></li>
+          <li><span>Produces the scene radiance field; optional <b class="mono">.ksplat</b> export for web.</span></li>
+          <li><span>dreamlab: <b class="accent">2.48M</b> Gaussians trained → cleaned to <b class="accent">1.55M</b> in SuperSplat.</span></li>
+        </ul>
+        <div class="callout">LichtFeld does the heavy GPU lifting — but it is a <b>tool we call</b>, not our code (next slide).</div>
+      </div>
+      <figure class="sideimg"><img src="../renders/dreamlab/nanogs_room_splat.png" alt="NanoGS room splat in UE 5.8" onerror="this.parentNode.innerHTML='&lt;div class=miss&gt;docs/renders/dreamlab/nanogs_room_splat.png&lt;/div&gt;'"><figcaption>Real Gaussians rendered in UE 5.8 via the recompiled NanoGS plugin</figcaption></figure>
     </div>
-    <div class="callout">Honest framing: the room is capture-limited as a <i>mesh</i>; the splat path carries it. Live status in <span class="mono">docs/engineering-log.md</span>.</div>
+    <div class="foot"><span class="brand">VITRINE</span><span class="sec">08 / 20 · Stage</span></div>
+    <aside class="notes" data-for="8"><h4>Speaker notes</h4>LichtFeld is the native trainer doing the GPU work. The pruned splat is what we hand to the engine for the splat-hero room path. Quality is bounded by the source blur, not the trainer.</aside>
+  </section>
+
+  <!-- 9 — LICHTFELD VENDORED -->
+  <section class="slide" data-sec="Architecture">
+    <div class="kicker">Architecture principle</div>
+    <h2>LichtFeld is a vendored tool. Vitrine is the product.</h2>
+    <div class="twobox">
+      <div class="b prod"><h3 style="margin-bottom:.5rem">Vitrine — the product</h3><p style="color:var(--ink-dim);font-size:.92rem">pipeline · web UI · onboarding · UE 5.8 overlay · the router. This is our code.</p></div>
+      <div class="x">— MCP →</div>
+      <div class="b tool"><h3 style="margin-bottom:.5rem">LichtFeld Studio — the tool</h3><p style="color:var(--ink-dim);font-size:.92rem">pinned git submodule <b class="mono" style="color:var(--ink)">v0.5.3</b>, never modified. 3DGS train · render · select-edit · export.</p></div>
+    </div>
+    <ul class="clean">
+      <li><span>We <b>never modify</b> the vendored tool — we update it by bumping the submodule tag.</span></li>
+      <li><span>We drive it through its first-class local <b class="accent">MCP server (70+ tools)</b> — discovery-first, not source-diving.</span></li>
+      <li><span>The separation keeps us on upstream SOTA <b>without a fork-maintenance burden</b>.</span></li>
+    </ul>
+    <div class="foot"><span class="brand">VITRINE</span><span class="sec">09 / 20 · Architecture</span></div>
+    <aside class="notes" data-for="9"><h4>Speaker notes</h4>This discipline is a deliberate decision (BOUNDARIES.md). By calling LichtFeld through its MCP surface rather than forking it, we stay current with upstream and avoid maintaining a divergent codebase.</aside>
+  </section>
+
+  <!-- 10 — STAGE: SCENE MESH -->
+  <section class="slide" data-sec="Stage · Mesh">
+    <div class="kicker">Stage 4 — from splat to a real polygonal room</div>
+    <h2>Scene mesh extraction.</h2>
+    <ul class="clean tight" style="margin-top:.7rem">
+      <li><span>Backends: <b class="accent">CoMe</b> (target) · <b class="accent">gsplat-TSDF</b> (stable, validated path) · MILo — then <b class="mono">MeshCleaner(smooth=0)</b>.</span></li>
+      <li><span>Honest caveat: room-mesh fidelity is <b>capture-limited</b> (slide 19) — on poor captures the splat is fairer than the mesh.</span></li>
+    </ul>
+    <div class="imgrow" style="grid-template-columns:repeat(3,1fr)">
+      <figure><img src="../renders/01_tsdf_mesh_overview.jpg" alt="TSDF mesh overview" onerror="this.parentNode.innerHTML='&lt;div class=miss&gt;01_tsdf_mesh_overview.jpg&lt;/div&gt;'"><figcaption>TSDF — overview</figcaption></figure>
+      <figure><img src="../renders/02_tsdf_mesh_side.jpg" alt="TSDF mesh side" onerror="this.parentNode.innerHTML='&lt;div class=miss&gt;02_tsdf_mesh_side.jpg&lt;/div&gt;'"><figcaption>TSDF — side</figcaption></figure>
+      <figure><img src="../renders/03_tsdf_mesh_topdown.jpg" alt="TSDF mesh top-down" onerror="this.parentNode.innerHTML='&lt;div class=miss&gt;03_tsdf_mesh_topdown.jpg&lt;/div&gt;'"><figcaption>TSDF — top-down</figcaption></figure>
+    </div>
+    <div class="foot"><span class="brand">VITRINE</span><span class="sec">10 / 20 · Stage</span></div>
+    <aside class="notes" data-for="10"><h4>Speaker notes</h4>TSDF is the safe scene path today; CoMe is being brought up for higher quality. The lumpiness you see in these renders is the capture, not the extractor — slide 19 proves it with a 2DGS-vs-TSDF comparison.</aside>
+  </section>
+
+  <!-- 11 — STAGE: OBJECTS -->
+  <section class="slide" data-sec="Stage · Objects">
+    <div class="kicker">Stage 5 — where the quality budget goes</div>
+    <h2>Object reconstruction.</h2>
+    <div class="cols c-3-2" style="flex:1;min-height:0;align-items:start">
+      <div>
+        <ul class="clean tight">
+          <li><span><b class="accent">SAM3</b> concept-segmentation → per-object image crops.</span></li>
+          <li><span>Image-to-3D via <b class="accent">TRELLIS.2</b> <span class="mono">hull_e2e</span> (Hunyuan3D-2.1 / SAM3D alternates) → textured GLB.</span></li>
+          <li><span>Each object re-placed at its <b>SfM real-world coordinate</b>, pre-scaled to UE cm.</span></li>
+          <li><span>Objects get the budget because the room is capture-limited — and close-orbit object captures avoid the room's translational blur.</span></li>
+        </ul>
+        <div class="callout">dreamlab objects (TRELLIS.2): <b>chair — excellent</b> · <b>toolbox — good</b> · <b>vacuum — marginal</b> (complex non-convex, reflective housing).</div>
+      </div>
+      <figure class="sideimg"><img src="../renders/04_object_035_room.jpg" alt="Reconstructed object placed in the room" onerror="this.parentNode.innerHTML='&lt;div class=miss&gt;04_object_035_room.jpg&lt;/div&gt;'"><figcaption>A reconstructed object, placed in the room</figcaption></figure>
+    </div>
+    <div class="foot"><span class="brand">VITRINE</span><span class="sec">11 / 20 · Stage</span></div>
+    <aside class="notes" data-for="11"><h4>Speaker notes</h4>Objects are individually reconstructed and re-placed at their SfM location. TRELLIS.2 hull_e2e is empirically superior to Hunyuan3D-2.1 for isolated objects given a clean per-object PLY. The object track is not the bottleneck — the room is.</aside>
+  </section>
+
+  <!-- 12 — STAGE: BAKE & FBX -->
+  <section class="slide" data-sec="Stage · Bake">
+    <div class="kicker">Stage 6 — make it game-ready</div>
+    <h2>Texture bake &amp; FBX export.</h2>
+    <div class="flow">
+      <div class="node"><div class="t">Clean</div><div class="b">MeshCleaner(smooth=0) — smoothing makes degenerate tris that segfault xatlas</div></div>
+      <div class="arrow">→</div>
+      <div class="node"><div class="t">Unwrap</div><div class="b">xatlas UV atlas (decimate first — raw TSDF isn't manifold)</div></div>
+      <div class="arrow">→</div>
+      <div class="node"><div class="t">Bake</div><div class="b">albedo from vertex colours — Blender Cycles GPU</div></div>
+      <div class="arrow">→</div>
+      <div class="node io"><div class="t">Export</div><div class="b">FBX with baked-texture material</div></div>
+    </div>
+    <p class="lede" style="margin-top:1.4rem">This is the UE-delivery path that <b class="accent">replaces native USD export</b> — baking is what turns research geometry into an asset an engine accepts.</p>
+    <div class="callout" style="border-color:var(--teal);background:rgba(38,198,218,.06)"><b>Why baking is mandatory:</b> UE drops vertex colours on FBX, OBJ <i>and</i> GLB <span class="mono">COLOR_0</span> import — captured colour only survives as a baked UV texture.</div>
+    <div class="foot"><span class="brand">VITRINE</span><span class="sec">12 / 20 · Stage</span></div>
+    <aside class="notes" data-for="12"><h4>Speaker notes</h4>Baking is the unglamorous step that makes everything usable. The MeshCleaner smooth=0 and decimate-before-xatlas details are hard-won — they're documented as anti-patterns because the obvious settings crash.</aside>
+  </section>
+
+  <!-- 13 — STAGE: UE ASSEMBLY -->
+  <section class="slide hero" data-sec="Stage · UE 5.8">
+    <div class="bg"><img src="../renders/dreamlab/scene_integrated.png" alt="Integrated dreamlab scene in UE 5.8" onerror="this.style.display='none'"></div>
+    <div class="scrim"></div>
+    <div class="inner">
+      <div class="kicker">Stage 7 — the payoff, in-engine</div>
+      <h2 style="max-width:22ch">Unreal Engine 5.8 assembly.</h2>
+      <p class="lede" style="color:var(--ink);max-width:72ch">In-repo UE 5.8 (no Epic gate). Import room + object <b class="accent">FBX game-assets</b> with Nanite; optional <b class="accent">NanoGS</b> plugin embeds <i>real</i> Gaussians; drive it via Web Remote Control <span class="mono">:30010</span> + experimental UE MCP. Result: an editable scene of room + interactive object assets.</p>
+    </div>
+    <div class="foot"><span class="brand">VITRINE</span><span class="sec">13 / 20 · Stage</span></div>
+    <aside class="notes" data-for="13"><h4>Speaker notes</h4>This is the payoff slide — the integrated scene standing in the editor. Blender is used to prove and pre-scale the scene when live UE assembly is flaky. The splat room + chair/vacuum/toolbox FBXs sit at pre-computed real-world coordinates.</aside>
+  </section>
+
+  <!-- 14 — WHY NOT USD -->
+  <section class="slide" data-sec="Decision">
+    <div class="kicker">The anti-pattern that shaped the design</div>
+    <h2>Why not USD?</h2>
+    <div class="twobox">
+      <div class="b tool" style="border-color:#7a2e2e;background:linear-gradient(180deg,#3a1818,#2a1212)"><h3 style="margin-bottom:.5rem">✗ &nbsp;USD ParticleField → UE</h3><p style="color:#e7b9b9;font-size:.92rem">LichtFeld's native USD export emits a <span class="mono">ParticleField</span> prim UE's importer <b>cannot import as a mesh</b>; UE also drops <span class="mono">displayColor</span>.</p></div>
+      <div class="b prod" style="border-color:#1f6b3a;background:linear-gradient(180deg,#0f3a22,#0c2c1b)"><h3 style="margin-bottom:.5rem">✓ &nbsp;Mesh → bake → FBX → UE</h3><p style="color:#b9e7c9;font-size:.92rem">Vitrine's own mesh → texture-bake → <b>FBX</b> path is the UE contract. USD stays optional / archival.</p></div>
+    </div>
+    <p class="lede">A representative "we tried the obvious thing and it failed" decision — captured in <span class="mono">docs/ANTIPATTERNS.md</span> (ADR-019) so it is never re-attempted.</p>
+    <div class="foot"><span class="brand">VITRINE</span><span class="sec">14 / 20 · Decision</span></div>
+    <aside class="notes" data-for="14"><h4>Speaker notes</h4>Show engineering judgment via a dead-end avoided. The vertex-colour-FBX detour rendered flat white in UE; the only thing that survives is a baked UV texture. This single fact set the delivery contract.</aside>
+  </section>
+
+  <!-- 15 — ENHANCERS -->
+  <section class="slide" data-sec="Enhancers">
+    <div class="kicker">The adaptive toolbox the router switches in</div>
+    <h2>Capture-conditional enhancers.</h2>
+    <div class="cols c3">
+      <div class="card"><h3><span class="dot d-teal"></span>ArtiFixer</h3><p>Regenerates floaters / holes / under-observed regions. Runs ArtiFixer-14B on a single <b style="color:var(--ink)">48 GB RTX 6000 Ada</b> (peak 45.5 GB; sm_89 via Ampere sm_86 compat).</p></div>
+      <div class="card"><h3><span class="dot d-blue"></span>Deblur</h3><p>For motion-blurred captures — a different defect class from coverage gaps.</p></div>
+      <div class="card"><h3><span class="dot d-ink"></span>Densification</h3><p>For sparse coverage — adds support where views are too thin.</p></div>
+    </div>
+    <div class="callout"><b>Conditional, not always-on.</b> ArtiFixer fixes <i>under-observation</i>, not blur. dreamlab is 0% under-observed (dense), so ArtiFixer was correctly <b>not applied</b> — its target is a sharp capture with viewpoint holes.</div>
+    <div class="foot"><span class="brand">VITRINE</span><span class="sec">15 / 20 · Enhancers</span></div>
+    <aside class="notes" data-for="15"><h4>Speaker notes</h4>This slide shows the adaptivity in action: the router has tools it can add, but it adds them only when the diagnosis calls for them. Applying ArtiFixer to a dense-but-blurry capture would be the wrong tool — a good illustration of "route by bottleneck".</aside>
+  </section>
+
+  <!-- 16 — INFRASTRUCTURE -->
+  <section class="slide" data-sec="Infra">
+    <div class="kicker">It's an engineered system, not a notebook</div>
+    <h2>Containers, networks &amp; MCP control.</h2>
+    <table>
+      <thead><tr><th>Container</th><th>Runs</th></tr></thead>
+      <tbody>
+        <tr><td>gaussian-toolkit</td><td>COLMAP · LichtFeld + MCP · Blender · SAM3 · orchestrator</td></tr>
+        <tr><td>vitrine-comfyui</td><td>FLUX.2 · TRELLIS.2 · Hunyuan3D-2.1 · SAM3D</td></tr>
+        <tr><td>milo / come</td><td>mesh-extraction backends</td></tr>
+        <tr><td>unreal + unreal-mcp-bridge</td><td>UE 5.8 overlay — assembly + render</td></tr>
+      </tbody>
+    </table>
+    <div style="margin-top:1.1rem">
+      <span class="pill blue">v2g-net</span><span class="pill blue">visionclaw_network</span>
+      <span class="pill on">LichtFeld MCP :45677</span><span class="pill on">web :7860</span><span class="pill on">ComfyUI :8188</span><span class="pill on">UE RC :30010</span><span class="pill on">UE MCP :8000</span>
+    </div>
+    <p class="lede" style="margin-top:1rem;font-size:1rem">GPU work is split across containers / GPUs; everything is MCP-controllable.</p>
+    <div class="foot"><span class="brand">VITRINE</span><span class="sec">16 / 20 · Infra</span></div>
+    <aside class="notes" data-for="16"><h4>Speaker notes</h4>The point of this slide is credibility: this is a real, deployable multi-container system on two networks, not a notebook. The host owns and rebuilds the GPU containers; the agent controller drives them by service name over MCP.</aside>
+  </section>
+
+  <!-- 17 — SOTA DISCIPLINE -->
+  <section class="slide" data-sec="Method">
+    <div class="kicker">The methodology guarantee</div>
+    <h2>SOTA discipline: clean, version-checked, pinned.</h2>
+    <div class="flow" style="margin-top:1.1rem">
+      <div class="node"><div class="t">Check</div><div class="b">verify the latest version before use</div></div>
+      <div class="arrow">→</div>
+      <div class="node"><div class="t">Pin</div><div class="b">lock tag / commit / checkpoint — no HEAD clones, no floating "latest"</div></div>
+      <div class="arrow">→</div>
+      <div class="node"><div class="t">Preflight</div><div class="b">idiot-check staged weights · VRAM · pins · licence</div></div>
+      <div class="arrow">→</div>
+      <div class="node io"><div class="t">Run</div><div class="b">reproducible, current</div></div>
+    </div>
+    <ul class="clean">
+      <li><span>Standing rule: <b>always run clean SOTA</b> — a single unified <b class="accent">~216 GB</b> model tree.</span></li>
+      <li><span><span class="mono">python -m pipeline.sota_registry check</span> validates everything before any run.</span></li>
+    </ul>
+    <div class="foot"><span class="brand">VITRINE</span><span class="sec">17 / 20 · Method</span></div>
+    <aside class="notes" data-for="17"><h4>Speaker notes</h4>This is why results are reproducible and the stack stays current. Pinning everything (no floating latest) means a run from three months ago can be reproduced exactly, and the preflight catches missing weights or VRAM before wasting a GPU-hour.</aside>
+  </section>
+
+  <!-- 18 — STATUS / RESULTS -->
+  <section class="slide" data-sec="Status">
+    <div class="kicker">Current status — the dreamlab reference run</div>
+    <h2>What's proven, plainly.</h2>
+    <div class="stats">
+      <div class="stat"><div class="n">Splat ✓</div><div class="l">Splat-hero room standing in UE 5.8 via recompiled NanoGS — real Gaussians, not a point cloud.</div></div>
+      <div class="stat"><div class="n">Scene ✓</div><div class="l">Mesh → texture → FBX → UE recipe validated on the TSDF path; room + objects placed at real-world coords.</div></div>
+      <div class="stat"><div class="n">Objects</div><div class="l">3 reconstructed via TRELLIS.2 (chair excellent, toolbox good, vacuum marginal); CoMe scene meshing being brought up.</div></div>
+    </div>
+    <div class="imgrow" style="grid-template-columns:repeat(3,1fr);margin-top:1rem">
+      <figure style="height:30vh"><img src="../renders/05_multi_object_composed.jpg" alt="composed" onerror="this.parentNode.innerHTML='&lt;div class=miss&gt;05_multi_object_composed.jpg&lt;/div&gt;'"><figcaption>composed</figcaption></figure>
+      <figure style="height:30vh"><img src="../renders/06_multi_object_topdown.jpg" alt="top-down" onerror="this.parentNode.innerHTML='&lt;div class=miss&gt;06_multi_object_topdown.jpg&lt;/div&gt;'"><figcaption>top-down</figcaption></figure>
+      <figure style="height:30vh"><img src="../renders/07_multi_object_rear.jpg" alt="rear" onerror="this.parentNode.innerHTML='&lt;div class=miss&gt;07_multi_object_rear.jpg&lt;/div&gt;'"><figcaption>rear</figcaption></figure>
+    </div>
+    <div class="foot"><span class="brand">VITRINE</span><span class="sec">18 / 20 · Status</span></div>
+    <aside class="notes" data-for="18"><h4>Speaker notes</h4>Lead with what's proven; be candid about what's still building. Status is re-derived from the engineering log and the v5 results section — re-check it before presenting, as it changes. Don't overclaim object counts.</aside>
   </section>
 
   <!-- 19 — BOTTLENECK -->
-  <section class="slide" data-sec="Status">
-    <div class="kicker">The honest constraint</div>
-    <h2>The dominant bottleneck is capture quality.</h2>
-    <p class="lede">Motion blur + partial coverage — <span class="accent">not mesh resolution</span> — sets the ceiling.</p>
-    <ul class="clean">
-      <li><span>Finer voxels render the noise <b>more sharply, not cleaner</b>.</span></li>
-      <li><span>The binding constraint is the <b>capture, not the algorithm</b>.</span></li>
-      <li><span>The fix lives at <b>capture time</b> (<span class="mono">docs/capture-methodology.md</span>).</span></li>
-      <li><span>ArtiFixer recon-enhancement on trial — <b>verdict pending</b>, gated.</span></li>
-    </ul>
+  <section class="slide" data-sec="Finding ★">
+    <div class="kicker">The deck's most important honest finding</div>
+    <h2>The bottleneck is capture, not algorithms.</h2>
+    <div class="cols c2" style="flex:1;min-height:0;align-items:start">
+      <ul class="clean tight">
+        <li><span><b>MUSIQ ≈31</b> — usable (above the ≈19 abandon threshold) but well below the <b>50–75</b> range of good photographic stills.</span></li>
+        <li><span><b>0% under-observed</b> — the defect is sharpness, not coverage.</span></li>
+        <li><span><b>2DGS ≈ TSDF</b> — two different extractors give the same planarity (CoMe-TSDF 72% inlier, both <span class="bad" style="color:#ff8f8f">fail</span> a "fair room"). If extraction were the limit, SOTA surface recon would have helped. It didn't.</span></li>
+        <li><span><b>Finer voxel = sharper noise</b> — 0.015→0.005 resolves the noise more precisely, it doesn't remove it.</span></li>
+      </ul>
+      <div class="card" style="align-self:stretch;display:flex;flex-direction:column;justify-content:center">
+        <h3><span class="dot d-teal"></span>The real lever is recapture</h3>
+        <p style="font-size:.95rem">A four-node research swarm confirmed: <b style="color:var(--ink)">no RGB-only method</b> materially improves a uniformly blur-limited capture. The fix is <b style="color:var(--ink)">4K60 short-shutter</b> with deliberate coverage — not bigger models or finer voxels. Routing quality to <i>objects</i> is the mitigation; <i>room</i> fidelity has a capture ceiling.</p>
+      </div>
+    </div>
+    <div class="foot"><span class="brand">VITRINE</span><span class="sec">19 / 20 · Finding</span></div>
+    <aside class="notes" data-for="19"><h4>Speaker notes</h4>This reframes "the room mesh looks rough" from a bug into a capture limit — and it's evidence-backed, not an excuse. The 2DGS≈TSDF result is the clincher: swapping in a SOTA extractor changed nothing, so the data is the ceiling.</aside>
   </section>
 
-  <!-- 20 — IMPACT / CLOSE -->
-  <section class="slide" data-sec="Close">
-    <div class="kicker">Why it matters</div>
-    <h2>A "building factory" for real spaces.</h2>
-    <p class="lede">An automated 2D-video → game-engine-3D workflow that fills the capability gap in preserving, archiving, and emulating complex physical spaces.</p>
-    <div class="cols c4">
-      <div class="card"><h3>Heritage</h3><p>Preservation &amp; archiving of immersive cultural assets.</p></div>
-      <div class="card"><h3>Collections</h3><p>Capture, catalogue, and reconstruct physical objects.</p></div>
-      <div class="card"><h3>Virtual production</h3><p>Real locations as game-ready UE scenes.</p></div>
-      <div class="card"><h3>Out-of-home XR</h3><p>Telepresence in virtual &amp; mixed-reality spaces.</p></div>
-    </div>
-    <div style="margin-top:2rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
-      <div class="brandmark" style="margin:0">
-        <div class="logo"><span>V</span></div>
-        <div class="name">Vitrine<small>video → structured 3D → Unreal Engine 5.8</small></div>
+  <!-- 20 — ROADMAP -->
+  <section class="slide" data-sec="Roadmap">
+    <div class="kicker">Close with direction</div>
+    <h2>Roadmap &amp; next steps.</h2>
+    <div class="cols c2">
+      <div class="card"><h3><span class="dot d-teal"></span>Now</h3>
+        <ul class="clean tight" style="margin-top:.6rem">
+          <li><span>Fresh <b>high-quality recapture</b> (4K60, short-shutter).</span></li>
+          <li><span>Complete <b>CoMe</b> scene meshing.</span></li>
+          <li><span>Finish the <b>object set</b>; web NanoGS / SuperSplat path.</span></li>
+        </ul>
       </div>
-      <span class="pill on">README.md</span>
-      <span class="pill">docs/asset-creation-decision-tree.md</span>
-      <span class="pill">docs/engineering-log.md</span>
+      <div class="card"><h3><span class="dot d-blue"></span>Next</h3>
+        <ul class="clean tight" style="margin-top:.6rem">
+          <li><span>LichtFeld-native parity.</span></li>
+          <li><span>Interactive elements + lighting <span style="color:#6b8499">(stretch)</span>.</span></li>
+          <li><span>Agentic controller owning the run end-to-end.</span></li>
+        </ul>
+      </div>
     </div>
+    <p class="lede" style="margin-top:1.3rem"><b class="accent">Point it at video of a room; get an editable, textured 3D scene in UE 5.8.</b> — now earned.</p>
+    <div style="margin-top:.9rem">
+      <span class="pill on">README.md</span><span class="pill">docs/asset-creation-decision-tree.md</span><span class="pill">docs/engineering-log.md</span><span class="pill">report/v5/main.pdf</span><span class="pill">AGENTS.md</span>
+    </div>
+    <div class="foot"><span class="brand">VITRINE</span><span class="sec">20 / 20 · DreamLab AI / University of Salford · 2026</span></div>
+    <aside class="notes" data-for="20"><h4>Speaker notes</h4>End on the one-line thesis from slide 1, now earned by the deck. Near-term is dominated by capture; the architecture is ready for better data. Point listeners at the repo entry points for depth.</aside>
   </section>
 
 </div>
 
 <div class="progress" id="progress"></div>
-<div class="hint">← →  ·  Space  ·  Home / End  ·  F fullscreen  ·  P print→PDF</div>
-<div class="nav"><button id="prev" title="Previous">‹</button><button id="next" title="Next">›</button></div>
+<div class="hint">← →  ·  Space  ·  Home / End  ·  N notes  ·  F fullscreen  ·  P print→PDF</div>
+<div class="nav">
+  <button id="prev" title="Previous">‹</button>
+  <button id="next" title="Next">›</button>
+</div>
 
 <script>
   const slides=[...document.querySelectorAll('.slide')];
-  const total=slides.length;
+  const notes=[...document.querySelectorAll('.notes')];
   let i=0;
   const progress=document.getElementById('progress');
-  // stamp footer (brand · section · n/total) into every slide so trimming auto-renumbers
-  slides.forEach((s,k)=>{
-    const f=document.createElement('div');
-    f.className='foot';
-    f.innerHTML='<span class="brand">VITRINE</span>'
-      +'<span class="sec">'+(s.dataset.sec||'')+'</span>'
-      +'<span>'+String(k+1).padStart(2,'0')+' / '+String(total).padStart(2,'0')+'</span>';
-    s.appendChild(f);
-  });
   function show(n){
-    i=Math.max(0,Math.min(total-1,n));
+    i=Math.max(0,Math.min(slides.length-1,n));
     slides.forEach((s,k)=>s.classList.toggle('active',k===i));
-    progress.style.width=((i+1)/total*100)+'%';
+    notes.forEach((a,k)=>a.classList.toggle('active',k===i));
+    progress.style.width=((i+1)/slides.length*100)+'%';
     if(location.hash!=='#'+(i+1)) history.replaceState(null,'','#'+(i+1));
   }
   const next=()=>show(i+1), prev=()=>show(i-1);
@@ -475,14 +545,15 @@
   addEventListener('keydown',e=>{
     if(['ArrowRight','PageDown',' '].includes(e.key)){e.preventDefault();next()}
     else if(['ArrowLeft','PageUp'].includes(e.key)){e.preventDefault();prev()}
-    else if(e.key==='Home'){show(0)} else if(e.key==='End'){show(total-1)}
+    else if(e.key==='Home'){show(0)} else if(e.key==='End'){show(slides.length-1)}
+    else if(e.key.toLowerCase()==='n'){document.body.classList.toggle('show-notes')}
     else if(e.key.toLowerCase()==='f'){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen()}
     else if(e.key.toLowerCase()==='p'){window.print()}
   });
   let sx=null;
   addEventListener('touchstart',e=>sx=e.touches[0].clientX,{passive:true});
   addEventListener('touchend',e=>{if(sx===null)return;const dx=e.changedTouches[0].clientX-sx;if(Math.abs(dx)>50)dx<0?next():prev();sx=null},{passive:true});
-  show(location.hash?parseInt(location.hash.slice(1))-1||0:0);
+  show(location.hash?(parseInt(location.hash.slice(1))-1||0):0);
 </script>
 </body>
 </html>
