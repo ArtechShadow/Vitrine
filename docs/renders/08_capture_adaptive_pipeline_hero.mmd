@@ -1,0 +1,17 @@
+flowchart LR
+    V[/"Video of a room"/] --> DIAG["DIAGNOSE<br/>frame-QA (MUSIQ + sharpness) · SfM · coverage · hardware"]
+    DIAG --> ROUTE{Capture profile<br/>routes the config}
+
+    ROUTE --> SCENE[SCENE]
+    ROUTE --> OBJ[OBJECTS]
+
+    SCENE --> SP["Splat → UE<br/>NanoGS plugin (real Gaussians)"]
+    SCENE --> ME["Mesh → UE<br/>2DGS / PGSR / TSDF → FBX (Nanite)"]
+    OBJ --> OR["SAM segment → TRELLIS.2 / Hunyuan3D / SAM3D<br/>→ textured GLB → FBX"]
+
+    SP --> UE[/"UE 5.8 scene<br/>room + interactive object game-assets"/]
+    ME --> UE
+    OR --> UE
+
+    classDef io fill:#0d47a1,stroke:#90caf9,color:#fff
+    class V,UE io
