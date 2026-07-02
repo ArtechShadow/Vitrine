@@ -294,6 +294,113 @@ camera saw the scene, not reconstruction artefacts.  Better reconstruction tools
 produce better results from a better capture; they cannot invent detail from blur.
 
 % ─────────────────────────────────────────────────────────────────────────────
+\section{Result 7: End-to-End Validation on Raw Photographic Capture (\texttt{rawcapdev}, July 2026)}
+\label{sec:results:rawcapdev}
+
+The dreamlab results above were gathered on soft video footage. In July 2026 the full
+pipeline was re-run on \textbf{raw photographic stills} to isolate the pipeline from the
+capture-quality ceiling: 55 hand-held Google~Pixel DNG frames of a gallery still-life ---
+a brass patina vessel with an inverted \emph{Heinz} ketchup bottle. This is the first
+run in which a \emph{single} capture produced both a room splat and a finished, textured,
+metadata-tagged object game-asset, and the first run driven entirely through the
+consolidated single mono-image with the LichtFeld binary baked in.
+
+\begin{keyfinding}[title={Key Finding: one capture, both deliverables}]
+Raw stills lift the capture ceiling that video hit: COLMAP registered \textbf{100\% of
+frames} (10.4k points) versus the partial registration typical of the soft dreamlab
+video. LichtFeld \texttt{igs+} then trained \emph{GPU-bound at $\approx$99\% utilisation}
+for $\approx$15 minutes to a 4-million-Gaussian splat, and the hero object reconstructed
+to a 4096 PBR-textured mesh --- all from the one 55-frame phone capture.
+\end{keyfinding}
+
+\subsection{Scene: raw decode and native splat}
+
+Decoding DNG with the camera's as-shot white balance (rather than \texttt{libraw}'s
+default daylight balance) removes a heavy orange cast that would otherwise propagate into
+the splat and every downstream object crop (Figure~\ref{fig:rawcap_scene}, left). COLMAP
+undistortion is capped at \texttt{max\_image\_size=2000}: without the cap the undistorted
+training images are full 36\,MP, and LichtFeld CPU-downscales every image on every load
+(a path that is not disk-cached, $\approx$5\,s/image), starving the GPU and turning a
+30k-iteration run into hours; with the cap the trainer stays GPU-bound and finishes in
+minutes (Figure~\ref{fig:rawcap_scene}, right).
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.42\textwidth]{figures/rawcapdev/wb_after.jpg}\hfill
+  \includegraphics[width=0.52\textwidth]{figures/rawcapdev/splat.jpg}
+  \caption{\textbf{Scene track on raw stills.} Left: a decoded frame with camera white
+  balance applied (neutral gallery walls). Right: the LichtFeld-native 4M-Gaussian splat
+  of the captured room, rendered from a held-out camera pose. Residual floater haze is
+  capture-limited, consistent with Result~6.}
+  \label{fig:rawcap_scene}
+\end{figure}
+
+\subsection{Object: image-to-3D game asset}
+
+Rather than isolate object Gaussians (segmentation quality remained the limiter --- see
+below), the hero object was reconstructed from a single clean SAM crop through the
+TRELLIS.2 image$\rightarrow$3D path: shape diffusion to a 274k-vertex mesh, then a 4096
+PBR texture bake (Figure~\ref{fig:rawcap_object}). Its world position was recovered
+from the \emph{convergence of the camera optical axes} (all frames orbit and
+point at the subject), and it was staged in a Blender exhibit scene carrying \code{v2g:*}
+lineage metadata (source capture, method, vertex count, world centre, interaction) and
+exported as a metadata-tagged GLB.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.56\textwidth]{figures/rawcapdev/object_mesh.jpg}\hfill
+  \includegraphics[width=0.40\textwidth]{figures/rawcapdev/exhibit.jpg}
+  \caption{\textbf{Object track.} Left: the TRELLIS.2 image$\rightarrow$3D mesh (274k
+  verts, 4096 PBR texture), orbit views. Right: the object staged as a game-ready asset
+  with \code{v2g:*} metadata. Far-face texture seams are expected single-view artefacts.}
+  \label{fig:rawcap_object}
+\end{figure}
+
+\subsection{Failures found by running it, and fixed}
+
+Running the pipeline on real data surfaced six defects that unit tests had not; each was
+fixed and, where it was a runtime environment fix, codified back into the build:
+
+\begin{itemize}
+  \item \textbf{White balance} --- decode applied a fixed daylight balance (orange cast);
+        fixed to the camera's as-shot balance.
+  \item \textbf{Undistortion size} --- \texttt{image\_undistorter} omitted
+        \texttt{max\_image\_size}, producing 36\,MP training images that starved the GPU;
+        capped at 2000\,px.
+  \item \textbf{Preview renderer SIGFPE} --- \texttt{cameras.bin} width/height are
+        \texttt{uint64}, not \texttt{int32}; the wrong read gave \texttt{render\_h=0} and
+        a divide-by-zero in the rasteriser.
+  \item \textbf{SfM plugin self-clobber} --- the bundled SplatReady plugin overwrote its
+        own config mid-run (a status-file naming collision) and exited 0 on failure;
+        routed to a transparent direct-COLMAP path instead.
+  \item \textbf{Web API dead on arrival} --- an adversarial QE agent found that the four
+        new Flask blueprints were imported from the wrong module path and silently
+        skipped, so the entire consolidated API returned 404; fixed and verified (37
+        routes register).
+  \item \textbf{drtk torch-ABI drift} --- TRELLIS.2's PBR texture bake failed because a
+        pinned \texttt{drtk} wheel (built for torch~2.11) mismatched the image's
+        torch~2.12; the ComfyUI entrypoint now self-heals by rebuilding \texttt{drtk}
+        from source against the installed torch.
+\end{itemize}
+
+\subsection{Consolidated web control surface}
+
+The run also validated the consolidated web service (ADR-023): a loopback-only Flask
+control surface (\code{127.0.0.1:7860}, reached over an SSH tunnel) providing a per-run
+file browser with previews, a streamed per-run zip download, a Gaussian-splat viewer, and
+an object \code{<model-viewer>} --- all vendored offline (no CDN) for an air-gapped
+appliance. The 3DGS-viewer and object-mesh serving paths were exercised against the
+\texttt{rawcapdev} outputs.
+
+\subsection{Residual limitation}
+
+SAM3 concept segmentation still returns coarse bounding boxes rather than per-object
+silhouettes, so automated per-object Gaussian isolation and precise in-room placement
+remain a follow-up; the interim object path (SAM/box crop $\rightarrow$ TRELLIS.2
+image$\rightarrow$3D) is what produced the result above. This is a segmentation-quality
+limitation, not a reconstruction limit.
+
+% ─────────────────────────────────────────────────────────────────────────────
 \section{Summary of Validated Capabilities}
 \label{sec:results:summary}
 
