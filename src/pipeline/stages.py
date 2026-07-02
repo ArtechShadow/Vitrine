@@ -2193,10 +2193,14 @@ class PipelineStages:
                 "ply": ply_path, "vertex_count": vc, "method": method,
             }
 
-        # Strategy 0: gsplat depth rendering -> TSDF (preferred, GPU-accelerated)
+        # Strategy 0: gsplat depth rendering -> TSDF. Correct for the ROOM
+        # (full_scene, dense COLMAP cameras) but WRONG for isolated objects —
+        # an orbit-TSDF of a partially-captured object splat is holey/noisy.
+        # Gate it to full_scene so per-object PLYs go to TRELLIS.2 first (ADR-015
+        # designated-primary hull, hull_e2e-validated). Fixes master-audit gap #8.
         try:
             import torch
-            if torch.cuda.is_available():
+            if label == "full_scene" and torch.cuda.is_available():
                 from pipeline.mesh_extractor import MeshExtractor, TSDFConfig
 
                 extractor = MeshExtractor(config=TSDFConfig(

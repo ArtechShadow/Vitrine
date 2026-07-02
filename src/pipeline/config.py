@@ -246,8 +246,9 @@ class InpaintConfig:
 class Hunyuan3DConfig:
     """Hunyuan3D 2.0 mesh reconstruction parameters."""
     enabled: bool = True
-    comfyui_url: str = "http://localhost:8189"
-    api_url: str = "http://localhost:3001"
+    # v2g-net ComfyUI service (was dead localhost:8189/3001 — master-audit gap #5).
+    comfyui_url: str = "http://vitrine-comfyui:8188"
+    api_url: str = "http://vitrine-comfyui:8188"
     quality: str = "standard"
     multiview: bool = True
     turbo: bool = False
