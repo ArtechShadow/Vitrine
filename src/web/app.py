@@ -365,7 +365,7 @@ def _pull_video(job_id: str, file_id: str, hint_name: str) -> None:
     dl_dir = INPUT_DIR / f"{job_id}_dl"
     dl_dir.mkdir(parents=True, exist_ok=True)
     try:
-        out = gdown.download(id=file_id, output=str(dl_dir) + os.sep, quiet=True, fuzzy=True)
+        out = gdown.download(id=file_id, output=str(dl_dir) + os.sep, quiet=True)
     except Exception as exc:  # noqa: BLE001
         _fail_job(job_id, f"Video download failed: {exc}")
         return
@@ -392,7 +392,7 @@ def _file_ingest_worker(job_id: str, file_id: str) -> None:
     dl_dir = INPUT_DIR / f"{job_id}_dl"
     dl_dir.mkdir(parents=True, exist_ok=True)
     try:
-        out = gdown.download(id=file_id, output=str(dl_dir) + os.sep, quiet=True, fuzzy=True)
+        out = gdown.download(id=file_id, output=str(dl_dir) + os.sep, quiet=True)
     except Exception as exc:  # noqa: BLE001
         _fail_job(job_id, f"Download failed: {exc}")
         return
