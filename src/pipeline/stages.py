@@ -581,27 +581,40 @@ class PipelineStages:
         colmap_dir = self.job_dir / "colmap"
         colmap_dir.mkdir(parents=True, exist_ok=True)
 
-        # Try SplatReady first
-        splatready_config = {
-            "video_path": "",
-            "base_output_folder": str(self.job_dir),
-            "frame_rate": self.config.ingest.fps,
-            "skip_extraction": True,
-            "reconstruction_method": self.config.reconstruct.method,
-            "colmap_exe_path": self.config.reconstruct.colmap_exe,
-            "use_fisheye": self.config.reconstruct.use_fisheye,
-            "max_image_size": self.config.ingest.max_image_size,
-            "min_scale": self.config.reconstruct.min_scale,
-            "skip_reconstruction": False,
-        }
-
-        config_path = self.job_dir / "splatready_config.json"
-        config_path.write_text(json.dumps(splatready_config, indent=2), encoding="utf-8")
-
+        # COLMAP SfM. Default to running COLMAP directly (feature_extractor → matcher →
+        # mapper → image_undistorter, see _run_colmap_direct) rather than via the bundled
+        # SplatReady plugin. SplatReady is fragile for our still-image path in two ways:
+        #   1. Its runner derives its status file by string-replacing "_run_config.json"
+        #      in the config path with "_progress.txt". A config NOT ending in
+        #      "_run_config.json" makes that a no-op, so the status file path COLLIDES with
+        #      the config path and the runner clobbers its own config mid-run (the reused
+        #      config then fails json.load with "Extra data").
+        #   2. The runner exits 0 even on failure, so returncode is not a reliable signal.
+        # The direct path is transparent and its output is validated below (the
+        # registration-rate gate). SplatReady stays available behind
+        # config.reconstruct.use_splatready (video fast path); the naming bug is worked
+        # around by giving the config the "_run_config.json" suffix it expects.
+        use_splatready = getattr(self.config.reconstruct, "use_splatready", False)
         plugin_dir = Path.home() / ".lichtfeld" / "plugins" / "splat_ready"
         runner = plugin_dir / "core" / "runner.py"
 
-        if runner.exists():
+        if use_splatready and runner.exists():
+            splatready_config = {
+                "video_path": "",
+                "base_output_folder": str(self.job_dir),
+                "frame_rate": self.config.ingest.fps,
+                "skip_extraction": True,
+                "reconstruction_method": self.config.reconstruct.method,
+                "colmap_exe_path": self.config.reconstruct.colmap_exe,
+                "use_fisheye": self.config.reconstruct.use_fisheye,
+                "max_image_size": self.config.ingest.max_image_size,
+                "min_scale": self.config.reconstruct.min_scale,
+                "skip_reconstruction": False,
+            }
+            # MUST end in "_run_config.json" so the runner's status file becomes a distinct
+            # "_progress.txt" instead of overwriting this config (see note above).
+            config_path = self.job_dir / "splatready_run_config.json"
+            config_path.write_text(json.dumps(splatready_config, indent=2), encoding="utf-8")
             try:
                 proc = subprocess.run(
                     ["python3", str(runner), str(config_path)],
@@ -610,7 +623,7 @@ class PipelineStages:
                 if proc.returncode != 0:
                     return StageResult(
                         success=False, stage="reconstruct",
-                        error=f"SplatReady failed: {proc.stderr[:500]}",
+                        error=f"SplatReady failed: {(proc.stderr or proc.stdout)[:500]}",
                     )
             except subprocess.TimeoutExpired:
                 return StageResult(
@@ -618,13 +631,16 @@ class PipelineStages:
                     error="COLMAP reconstruction timed out",
                 )
         else:
-            # Fallback: run COLMAP directly
+            # Transparent, reliable path (default).
             try:
                 self._run_colmap_direct(colmap_dir, frames_path)
             except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as exc:
+                stderr = getattr(exc, "stderr", "") or ""
+                if isinstance(stderr, bytes):
+                    stderr = stderr.decode("utf-8", "replace")
                 return StageResult(
                     success=False, stage="reconstruct",
-                    error=f"COLMAP failed: {exc}",
+                    error=f"COLMAP failed: {exc} :: {stderr[:500]}",
                 )
 
         dataset_dir = colmap_dir / "undistorted"
@@ -714,12 +730,20 @@ class PipelineStages:
         ], check=True, capture_output=True, timeout=1800)
 
         undist_dir = output_dir / "undistorted"
+        # Cap undistorted image size. LichtFeld downscales any image wider than its
+        # --max-width (default 3840px) on the CPU on *every* load — the downscale path is
+        # NOT disk-cached, so a 36MP source costs ~5s/image every iteration, starving the
+        # GPU and turning a 30k-iter run into hours. Undistorting at a bounded size (COLMAP
+        # bakes the correctly-rescaled intrinsics into cameras.bin) keeps images under that
+        # threshold so LichtFeld takes its fast, no-resample path and stays GPU-bound.
+        undistort_max = getattr(self.config.ingest, "max_image_size", 2000) or 2000
         subprocess.run([
             colmap, "image_undistorter",
             "--image_path", str(frame_dir),
             "--input_path", str(sparse_dir / "0"),
             "--output_path", str(undist_dir),
             "--output_type", "COLMAP",
+            "--max_image_size", str(undistort_max),
         ], check=True, capture_output=True, timeout=300)
 
         undist_sparse = undist_dir / "sparse"

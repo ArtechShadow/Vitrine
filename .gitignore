@@ -134,6 +134,8 @@ unreal/runtime/Plugins/*/_ref/
 tasks/
 research/gap-analysis-local/
 research/come-paper/
+# Raw capture staged locally for dev/testing the E2E (large; not source).
+rawsForDev/
 
 # ---------------------------------------------------------------------------
 # ruflo / ruvector local database (not source)
