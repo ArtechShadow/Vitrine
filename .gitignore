@@ -12,13 +12,11 @@ lichtfeld-studio.aps
 # Build artifacts
 # ---------------------------------------------------------------------------
 CLAUDE.md
-build/
-build*/
-build*/**
-# ...but the C++ build ignore above is unanchored, so re-include the docs/build/
-# documentation tree it would otherwise swallow (the "Build (Linux)" guide etc.).
-!docs/build/
-!docs/build/**
+# Anchored to repo root so the C++ build dirs (build/, build-lf/, …) are ignored
+# WITHOUT swallowing nested paths like docs/build/ (which held the Linux build guide).
+/build/
+/build*/
+/build*/**
 cmake-build-debug/
 cmake-build-release/
 output*
