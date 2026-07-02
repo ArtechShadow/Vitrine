@@ -197,9 +197,18 @@ def decode_directory(
         manifest["by_ext"][ext] = manifest["by_ext"].get(ext, 0) + 1
 
         if ext in NATIVE_EXTS:
-            target = dst / p.name
-            if not in_place and not target.exists():
-                shutil.copy2(str(p), str(target))
+            # Normalise to a lowercase extension: COLMAP's image reader and the
+            # frame-selection globs are case-sensitive, so a `.JPG`/`.TIF`
+            # capture must not keep its original case or it gets silently dropped.
+            target = dst / f"{p.stem}.{ext}"
+            if target.resolve() != p.resolve() and not target.exists():
+                if in_place:
+                    try:
+                        p.replace(target)
+                    except OSError:
+                        shutil.copy2(str(p), str(target))
+                else:
+                    shutil.copy2(str(p), str(target))
             manifest["native"] += 1
             continue
 

@@ -78,6 +78,10 @@ def queue_job(job_id: str) -> bool:
             manifest["native"] + manifest["decoded"]
             if manifest else sum(1 for p in images_dst.iterdir() if p.is_file())
         )
+        if ready == 0:
+            append_log(job_id, "ERROR: no usable images after decode — nothing to reconstruct")
+            update_job(job_id, state=JobState.FAILED, error="No usable images after decode")
+            return False
         capture = {"kind": "images", "images_dir": str(images_dst), "ready_images": ready}
         if manifest:
             capture["decode"] = manifest

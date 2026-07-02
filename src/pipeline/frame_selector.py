@@ -72,22 +72,21 @@ class FrameSelector:
         """Score all frames in a directory for quality metrics."""
         from .frame_quality import FrameQualityAssessor
 
-        frame_dir = Path(frame_dir)
-        image_files = sorted(
-            list(frame_dir.glob("*.jpg")) + list(frame_dir.glob("*.png"))
-        )
-
-        if not image_files:
-            logger.warning("No frames found in %s", frame_dir)
-            return []
-
+        # Score straight off the assessor's own (case-insensitive, multi-format)
+        # collection so paths and scores can never misalign, and so uppercase
+        # (.JPG) / .jpeg / tif / bmp / webp captures aren't silently dropped —
+        # a re-glob for "*.jpg"/"*.png" here previously dropped exactly those.
         assessor = FrameQualityAssessor()
         results = assessor.assess_directory(str(frame_dir))
 
+        if not results:
+            logger.warning("No frames found in %s", frame_dir)
+            return []
+
         scores = []
-        for i, (path, quality) in enumerate(zip(image_files, results)):
+        for i, quality in enumerate(results):
             score = FrameScore(
-                path=str(path),
+                path=str(quality.path),
                 index=i,
                 blur_score=quality.blur_score,
                 exposure_score=abs(quality.exposure_mean - 128),

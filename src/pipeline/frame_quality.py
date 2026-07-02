@@ -381,7 +381,9 @@ class FrameQualityAssessor:
         self,
         frame_dir: str | Path,
         *,
-        extensions: Sequence[str] = (".jpg", ".jpeg", ".png"),
+        extensions: Sequence[str] = (
+            ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp",
+        ),
     ) -> List[FrameQuality]:
         """Assess all frames in a directory, including cross-frame duplicate
         detection.
@@ -461,7 +463,9 @@ class FrameQualityAssessor:
         *,
         min_good_frames: int = 60,
         target_frames: Optional[int] = None,
-        extensions: Sequence[str] = (".jpg", ".jpeg", ".png"),
+        extensions: Sequence[str] = (
+            ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp",
+        ),
     ) -> "VideoQualityVerdict":
         """Quality-gate one video's extracted frames; drop the whole video if
         it can't supply enough good frames.

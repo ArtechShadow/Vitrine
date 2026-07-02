@@ -1,0 +1,49 @@
+name: Vitrine CI
+
+# Vitrine's own gate (the upstream ubuntu/windows/nightly workflows are all gated
+# to `github.repository == 'MrNeRF/LichtFeld-Studio'`, so nothing ran here).
+# CPU-only, no CUDA/container — byte-compile + hermetic pipeline unit tests.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/pipeline/**'
+      - 'src/web/**'
+      - 'tests/python/**'
+      - '.github/workflows/vitrine-ci.yml'
+  pull_request:
+    paths:
+      - 'src/pipeline/**'
+      - 'src/web/**'
+      - 'tests/python/**'
+  workflow_dispatch:
+
+jobs:
+  lint-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Byte-compile (syntax gate)
+        run: python -m compileall -q src/pipeline src/web
+      - name: Ruff — critical bug rules (undefined names, syntax, bad asserts)
+        continue-on-error: true   # reporting-only for now; tighten to blocking later
+        run: |
+          pip install ruff
+          ruff check src/pipeline src/web \
+            --select E9,F63,F7,F82,F821 --output-format=github
+
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install light CPU test deps
+        run: pip install pytest pillow numpy
+      - name: Hermetic pipeline unit tests (no GPU/container)
+        run: pytest -q tests/python/test_image_decoder.py

@@ -1,4 +1,7 @@
-# Python test dependencies for lichtfeld module
+# Python test dependencies for the Vitrine pipeline tests
 pytest>=7.0
 pytest-xdist>=3.0  # Parallel test execution
 numpy>=1.20
+pillow>=10.0                 # image_decoder / frame tests
+requests>=2.28              # trellis2_client, view_completer, sam3d_client import at module load
+opencv-python-headless>=4.8  # frame_quality (cv2) import at module load
