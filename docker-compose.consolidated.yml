@@ -49,7 +49,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['0']
+              device_ids: ['0', '1']   # both RTX 6000 Ada — DiffusionGemma no longer occupies GPU0
               capabilities: [gpu, compute, utility, graphics]
         limits:
           memory: 200g
