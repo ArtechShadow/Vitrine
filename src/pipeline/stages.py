@@ -1415,9 +1415,11 @@ class PipelineStages:
                 with open(cameras_bin, 'rb') as f:
                     n_cams = struct.unpack('<Q', f.read(8))[0]
                     for _ in range(n_cams):
-                        cam_id, model_id, w, h = struct.unpack('<iiii', f.read(16))
-                        w = w & 0xFFFFFFFF
-                        h = h & 0xFFFFFFFF
+                        # COLMAP cameras.bin layout: camera_id(uint32), model_id(int32),
+                        # width(uint64), height(uint64), then params(double*). Reading w/h
+                        # as int32 previously split the width uint64 into (w, h=high32=0),
+                        # yielding render_h=0 → SIGFPE in the rasterizer tile grid.
+                        cam_id, model_id, w, h = struct.unpack('<iiQQ', f.read(24))
                         # Read params (assume PINHOLE: fx, fy, cx, cy)
                         n_params = 4
                         params = struct.unpack(f'<{n_params}d', f.read(8 * n_params))

@@ -96,7 +96,15 @@ def _decode_rawpy(src: Path, dst: Path) -> bool:
         import imageio.v3 as iio
         import rawpy
         with rawpy.imread(str(src)) as raw:
-            rgb = raw.postprocess(no_auto_bright=False, output_bps=8)
+            # use_camera_wb: honour the camera's as-shot white balance (phone auto-WB is
+            # excellent). Without it, libraw applies a fixed daylight WB, leaving a strong
+            # warm/orange cast on indoor captures that then propagates into the splat and
+            # every downstream crop. output_color sRGB keeps colours in a standard space.
+            rgb = raw.postprocess(
+                use_camera_wb=True,
+                no_auto_bright=False,
+                output_bps=8,
+            )
         iio.imwrite(str(dst), rgb)
         return dst.exists() and dst.stat().st_size > 0
     except Exception as exc:
