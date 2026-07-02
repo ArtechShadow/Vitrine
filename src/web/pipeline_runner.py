@@ -13,6 +13,7 @@ The old PipelineRunner that drove the state machine is removed.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -47,52 +48,151 @@ def queue_job(job_id: str) -> bool:
     output_dir = Path(job.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Copy or symlink the input video into the job directory
-    input_path = Path(job.input_video_path)
-    if input_path.exists():
-        target = output_dir / "input" / input_path.name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if not target.exists():
-            shutil.copy2(str(input_path), str(target))
+    # Stage the capture into the job directory so Claude Code can find it.
+    input_kind = getattr(job, "input_kind", "video")
+    if input_kind == "images" and job.input_dir and Path(job.input_dir).exists():
+        # PREFERRED capture: raw/still images serve as frames — no frame
+        # extraction needed. DECODE them to COLMAP-native images (DNG/CR2/HEIC/…
+        # can't be read by COLMAP or the IQA gate) as they are staged under
+        # input/images/, so the downstream flow has no format blockers.
+        images_src = Path(job.input_dir)
+        images_dst = output_dir / "input" / "images"
+        images_dst.mkdir(parents=True, exist_ok=True)
 
-        # Also create a convenience symlink as input.mp4
-        link = output_dir / "input.mp4"
-        if not link.exists():
-            try:
-                link.symlink_to(target)
-            except OSError:
-                shutil.copy2(str(target), str(link))
+        manifest = None
+        try:
+            from pipeline.image_decoder import decode_directory
+            manifest = decode_directory(
+                images_src, images_dst, log=lambda m: append_log(job_id, m)
+            )
+        except Exception as exc:  # decode module/deps unavailable — never block
+            logger.error("decode stage unavailable, copying images as-is: %s", exc)
+            append_log(job_id, f"WARN: decode stage unavailable ({exc}); copying images as-is")
+            for f in sorted(images_src.iterdir()):
+                if f.is_file():
+                    t = images_dst / f.name
+                    if not t.exists():
+                        shutil.copy2(str(f), str(t))
+
+        ready = (
+            manifest["native"] + manifest["decoded"]
+            if manifest else sum(1 for p in images_dst.iterdir() if p.is_file())
+        )
+        capture = {"kind": "images", "images_dir": str(images_dst), "ready_images": ready}
+        if manifest:
+            capture["decode"] = manifest
+        (output_dir / "capture.json").write_text(json.dumps(capture, indent=2))
+        append_log(
+            job_id,
+            f"Image capture ready: {ready} COLMAP-native image(s) at {images_dst} "
+            f"— frame extraction not required",
+        )
+        if manifest and manifest.get("failed"):
+            append_log(
+                job_id,
+                f"WARN: {manifest['failed']} image(s) could not be decoded: "
+                f"{manifest['failures'][:8]}",
+            )
+    else:
+        # VIDEO capture: copy the file in and provide an input.mp4 convenience link.
+        input_path = Path(job.input_video_path) if job.input_video_path else None
+        if input_path and input_path.exists() and input_path.is_file():
+            target = output_dir / "input" / input_path.name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if not target.exists():
+                shutil.copy2(str(input_path), str(target))
+
+            link = output_dir / "input.mp4"
+            if not link.exists():
+                try:
+                    link.symlink_to(target)
+                except OSError:
+                    shutil.copy2(str(target), str(link))
+        (output_dir / "capture.json").write_text(json.dumps(
+            {"kind": "video", "filename": job.filename}, indent=2,
+        ))
 
     update_job(job_id, state=JobState.QUEUED)
     append_log(job_id, f"Job queued for Claude Code: {job.filename}")
     append_log(job_id, f"Job directory: {job.output_dir}")
 
     # Attempt to auto-launch Claude Code if an API key is available
-    launched = _launch_claude_code(job_id, job.output_dir)
+    launched = _launch_claude_code(
+        job_id, job.output_dir, input_kind=input_kind,
+        image_count=getattr(job, "image_count", 0),
+    )
     if launched:
-        append_log(job_id, "Claude Code launched automatically with stored API key")
+        append_log(job_id, "Claude Code launched automatically (API key or Claude subscription session)")
     else:
-        append_log(job_id, "Waiting for Claude Code to pick up this job in the terminal...")
+        append_log(
+            job_id,
+            "No Claude auth yet. Open the Terminal tab and run: "
+            "claude --dangerously-skip-permissions  then  /login  "
+            "(log in with your Claude subscription — no API key needed). "
+            "This job is queued and will be picked up.",
+        )
 
     return True
 
 
-def _launch_claude_code(job_id: str, output_dir: str) -> bool:
+def _has_oauth_session() -> bool:
+    """True if a Claude Code subscription (OAuth) session exists on disk.
+
+    Provisioned by logging in from the web terminal
+    (``claude --dangerously-skip-permissions`` then ``/login``). Persists in the
+    ``claude-session`` volume mounted at ``/home/ubuntu/.claude``.
+    """
+    for p in (
+        Path("/home/ubuntu/.claude/.credentials.json"),
+        Path.home() / ".claude" / ".credentials.json",
+    ):
+        try:
+            if p.exists() and p.stat().st_size > 10:
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def _launch_claude_code(
+    job_id: str, output_dir: str, input_kind: str = "video", image_count: int = 0
+) -> bool:
     """Launch Claude Code as a background subprocess to process the job.
 
     Reads the API key from the persistent volume. If no key is stored,
     returns False (the user must run Claude Code manually via the terminal).
     """
-    # Check for API key or OAuth session
+    # Check for API key or OAuth session. Either is sufficient — a Claude
+    # subscription login (OAuth, provisioned via the web terminal) overrides
+    # the need for an Anthropic API key. Don't auto-launch with no auth at all;
+    # the job stays queued for manual pickup in the terminal instead.
     api_key = None
     if _API_KEY_PATH.exists():
         api_key = _API_KEY_PATH.read_text().strip() or None
 
+    if not api_key and not _has_oauth_session():
+        logger.info("No Claude auth (API key or subscription session) — skipping auto-launch")
+        return False
+
+    if input_kind == "images":
+        capture_line = (
+            f"This is an IMAGE capture: {image_count} photos have already been decoded "
+            f"to COLMAP-native images at {output_dir}/input/images and serve as the "
+            f"capture frames (raw/DNG/HEIC were converted by the decode stage — see "
+            f"capture.json). SKIP the ingest (frame-extraction) stage entirely; use that "
+            f"directory as the frames directory. Then run: select_frames → reconstruct → "
+        )
+    else:
+        capture_line = (
+            f"This is a VIDEO capture at {output_dir}/input.mp4. "
+            f"Run ALL stages: ingest → select_frames → reconstruct → "
+        )
+
     prompt = (
-        f"Process the video pipeline job at {output_dir}. "
+        f"Process the pipeline job at {output_dir}. "
         f"Job ID is {job_id}. "
         f"Follow the instructions in CLAUDE.md step by step. "
-        f"You MUST complete ALL stages: ingest → select_frames → reconstruct → "
+        f"{capture_line}"
         f"train → segment → extract_objects → mesh_objects → assemble_usd → validate. "
         f"Do NOT stop after training. Continue through segmentation, mesh extraction, "
         f"and USD assembly. "

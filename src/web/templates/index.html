@@ -75,35 +75,60 @@
     <!-- API Key Setup Banner -->
     <div id="setup-banner" class="hidden border-b border-lf-border">
       <div id="setup-needed" class="hidden max-w-6xl mx-auto px-6 py-6">
-        <div class="bg-lf-surface rounded-xl border border-lf-warning/40 p-6">
+        <div class="bg-lf-surface rounded-xl border border-lf-accent/40 p-6">
           <div class="flex items-start gap-4">
-            <div class="w-10 h-10 rounded-lg bg-lf-warning/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-              <svg class="w-5 h-5 text-lf-warning" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div class="w-10 h-10 rounded-lg bg-lf-accent/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+              <svg class="w-5 h-5 text-lf-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                       d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>
               </svg>
             </div>
             <div class="flex-1">
-              <h3 class="font-semibold text-lg mb-1">Anthropic API Key Required</h3>
+              <h3 class="font-semibold text-lg mb-1">Connect Claude Code</h3>
               <p class="text-sm text-lf-muted mb-4">
-                To auto-launch Claude Code for video processing, enter your Anthropic API key below.
-                The key is stored securely on the persistent data volume and never exposed in logs or the UI.
+                The pipeline is driven by Claude Code inside the container.
+                <span class="text-lf-text">Recommended:</span> log in with your Claude subscription in the
+                terminal &mdash; no API key needed.
               </p>
-              <div class="flex items-center gap-3">
-                <input type="password" id="api-key-input" placeholder="sk-ant-api03-..."
-                       class="flex-1 max-w-md bg-lf-bg border border-lf-border rounded-lg px-4 py-2 text-sm mono
-                              text-lf-text placeholder-lf-muted/50 focus:outline-none focus:border-lf-accent transition">
-                <button onclick="saveAndTestKey()" id="save-key-btn"
-                        class="px-4 py-2 bg-lf-accent text-white text-sm font-medium rounded-lg hover:bg-lf-accent-light transition
-                               disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
-                  <span id="save-key-text">Save &amp; Test</span>
-                  <svg id="save-key-spinner" class="hidden w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                  </svg>
-                </button>
+
+              <!-- Primary: log in via the web terminal (OAuth subscription) -->
+              <div class="rounded-lg border border-lf-border bg-lf-bg p-4 mb-4">
+                <div class="flex items-center justify-between gap-4 flex-wrap">
+                  <div class="min-w-0">
+                    <p class="text-sm font-medium text-lf-text mb-1">Log in with your Claude subscription</p>
+                    <p class="text-xs text-lf-muted">In the terminal, run
+                      <code class="mono text-lf-accent">claude --dangerously-skip-permissions</code>, then type
+                      <code class="mono text-lf-accent">/login</code> and accept the bypass-permissions prompt once.
+                      The session persists and the pipeline auto-runs jobs.</p>
+                  </div>
+                  <button onclick="loginViaTerminal()"
+                          class="px-4 py-2 bg-lf-accent text-white text-sm font-medium rounded-lg hover:bg-lf-accent-light transition whitespace-nowrap">
+                    Open terminal &amp; log in &rarr;
+                  </button>
+                </div>
               </div>
-              <p id="key-test-result" class="hidden text-sm mt-3"></p>
+
+              <!-- Secondary: Anthropic API key -->
+              <details class="group">
+                <summary class="text-xs text-lf-muted cursor-pointer hover:text-lf-text select-none">
+                  Or use an Anthropic API key instead
+                </summary>
+                <div class="flex items-center gap-3 mt-3">
+                  <input type="password" id="api-key-input" placeholder="sk-ant-api03-..."
+                         class="flex-1 max-w-md bg-lf-bg border border-lf-border rounded-lg px-4 py-2 text-sm mono
+                                text-lf-text placeholder-lf-muted/50 focus:outline-none focus:border-lf-accent transition">
+                  <button onclick="saveAndTestKey()" id="save-key-btn"
+                          class="px-4 py-2 bg-lf-surface border border-lf-border text-lf-text text-sm font-medium rounded-lg hover:border-lf-accent transition
+                                 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+                    <span id="save-key-text">Save &amp; Test</span>
+                    <svg id="save-key-spinner" class="hidden w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                    </svg>
+                  </button>
+                </div>
+                <p id="key-test-result" class="hidden text-sm mt-3"></p>
+              </details>
             </div>
           </div>
         </div>
@@ -115,9 +140,9 @@
             <svg class="w-4 h-4 text-lf-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
             </svg>
-            <span class="text-sm text-lf-muted">API Key: <span id="key-display" class="mono text-lf-text"></span></span>
+            <span class="text-sm text-lf-muted">Claude: <span id="key-display" class="mono text-lf-text"></span></span>
           </div>
-          <button onclick="toggleKeyEdit()" class="text-xs text-lf-muted hover:text-lf-accent transition">Change key</button>
+          <button onclick="toggleKeyEdit()" class="text-xs text-lf-muted hover:text-lf-accent transition">Change</button>
         </div>
       </div>
     </div>
@@ -163,34 +188,39 @@
     <main id="panel-pipeline" class="flex-1 max-w-6xl mx-auto w-full px-6 py-8 space-y-8">
       <!-- Upload Area -->
       <section>
-        <div id="drop-zone"
-             class="border-2 border-dashed border-lf-border rounded-xl p-12 text-center cursor-pointer
-                    hover:border-lf-accent/50 transition-all duration-200"
-             ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)"
-             ondrop="handleDrop(event)" onclick="document.getElementById('file-input').click()">
-          <input type="file" id="file-input" accept=".mp4,.mov,.avi,.mkv,.webm" class="hidden"
-                 onchange="handleFileSelect(this.files)">
-          <div id="upload-idle">
-            <svg class="w-12 h-12 mx-auto text-lf-muted mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
-            </svg>
-            <p class="text-lf-text font-medium mb-1">Drop a video file here or click to browse</p>
-            <p class="text-sm text-lf-muted">MP4, MOV, AVI, MKV, WebM &mdash; max 2 GB &mdash; Claude Code picks up queued jobs</p>
+        <div class="border-2 border-dashed border-lf-border rounded-xl p-8 md:p-10">
+          <div class="flex items-start gap-4 mb-5">
+            <div class="w-10 h-10 rounded-lg bg-lf-accent/15 flex items-center justify-center flex-shrink-0 mt-0.5">
+              <svg class="w-5 h-5 text-lf-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"
+                      d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
+              </svg>
+            </div>
+            <div>
+              <p class="text-lf-text font-medium mb-0.5">Ingest a capture from Google Drive</p>
+              <p class="text-sm text-lf-muted">Paste a shareable Drive link (sharing set to
+                &ldquo;Anyone with the link&rdquo;). If it&rsquo;s a <span class="text-lf-text">folder of photos</span>,
+                the raw/still images are used as the capture &mdash; <span class="text-lf-text">preferred</span>, sharper
+                than video frames. Otherwise a video is used. Claude Code picks up the queued job.</p>
+            </div>
           </div>
-          <div id="upload-progress" class="hidden">
-            <div class="flex items-center justify-center gap-3 mb-3">
-              <svg class="w-5 h-5 text-lf-accent animate-spin" fill="none" viewBox="0 0 24 24">
+          <div class="flex flex-col sm:flex-row gap-3">
+            <input type="url" id="drive-url"
+                   placeholder="https://drive.google.com/drive/folders/…   or   …/file/d/…/view"
+                   class="flex-1 bg-lf-bg border border-lf-border rounded-lg px-4 py-3 text-sm mono
+                          text-lf-text placeholder-lf-muted/50 focus:outline-none focus:border-lf-accent transition"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();submitDriveUrl();}">
+            <button id="drive-btn" onclick="submitDriveUrl()"
+                    class="px-6 py-3 bg-lf-accent text-white text-sm font-medium rounded-lg hover:bg-lf-accent-light
+                           transition whitespace-nowrap flex items-center justify-center gap-2">
+              <svg id="drive-spinner" class="w-4 h-4 animate-spin hidden" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
               </svg>
-              <span id="upload-filename" class="font-medium"></span>
-            </div>
-            <div class="w-64 mx-auto bg-lf-border rounded-full h-2">
-              <div id="upload-bar" class="bg-lf-accent h-2 rounded-full transition-all" style="width:0%"></div>
-            </div>
-            <p id="upload-status-text" class="text-sm text-lf-muted mt-2">Uploading...</p>
+              <span id="drive-btn-label">Ingest video</span>
+            </button>
           </div>
+          <p id="drive-status" class="text-sm mt-3 hidden"></p>
         </div>
       </section>
 
@@ -198,7 +228,7 @@
       <section>
         <h2 class="text-sm font-semibold text-lf-muted uppercase tracking-wider mb-4">Jobs</h2>
         <div id="jobs-list" class="space-y-3">
-          <p class="text-lf-muted text-sm">No jobs yet. Upload a video to get started.</p>
+          <p class="text-lf-muted text-sm">No jobs yet. Paste a Google Drive link (folder of photos, or a video) above to get started.</p>
         </div>
       </section>
 
@@ -324,77 +354,50 @@
     let currentJobId = null;
     let eventSource = null;
 
-    // ---- Upload ----
-    function handleDragOver(e) {
-      e.preventDefault();
-      e.currentTarget.classList.add('drop-active');
-    }
-    function handleDragLeave(e) {
-      e.currentTarget.classList.remove('drop-active');
-    }
-    function handleDrop(e) {
-      e.preventDefault();
-      e.currentTarget.classList.remove('drop-active');
-      const files = e.dataTransfer.files;
-      if (files.length > 0) uploadFile(files[0]);
-    }
-    function handleFileSelect(files) {
-      if (files.length > 0) uploadFile(files[0]);
-    }
-
-    function uploadFile(file) {
-      const maxSize = 2 * 1024 * 1024 * 1024;
-      if (file.size > maxSize) {
-        alert('File too large. Maximum size is 2 GB.');
-        return;
-      }
-      const allowed = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
-      const ext = file.name.split('.').pop().toLowerCase();
-      if (!allowed.includes(ext)) {
-        alert('Invalid file type. Allowed: ' + allowed.join(', '));
-        return;
+    // ---- Ingest from Google Drive URL ----
+    function submitDriveUrl() {
+      const input = document.getElementById('drive-url');
+      const url = (input.value || '').trim();
+      if (!url) { showDriveStatus('Paste a Google Drive share link first.', 'warn'); return; }
+      if (!/(drive|docs)\.google\.com/.test(url)) {
+        showDriveStatus('That does not look like a Google Drive link.', 'warn'); return;
       }
 
-      document.getElementById('upload-idle').classList.add('hidden');
-      document.getElementById('upload-progress').classList.remove('hidden');
-      document.getElementById('upload-filename').textContent = file.name;
+      setDriveBusy(true);
+      showDriveStatus('Submitting link…', 'info');
 
-      const form = new FormData();
-      form.append('video', file);
+      fetch('/ingest/url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+      })
+        .then(async (r) => {
+          const data = await r.json().catch(() => ({}));
+          if (r.status === 202 || r.status === 201) {
+            input.value = '';
+            showDriveStatus('Downloading from Drive on the server — the job will appear below.', 'ok');
+            refreshJobs();
+            if (data.job_id) openDetail(data.job_id);
+          } else {
+            showDriveStatus('Failed: ' + (data.error || ('HTTP ' + r.status)), 'error');
+          }
+        })
+        .catch((e) => showDriveStatus('Network error: ' + e.message, 'error'))
+        .finally(() => setDriveBusy(false));
+    }
 
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/upload');
+    function setDriveBusy(busy) {
+      document.getElementById('drive-btn').disabled = busy;
+      document.getElementById('drive-spinner').classList.toggle('hidden', !busy);
+      document.getElementById('drive-btn-label').textContent = busy ? 'Working…' : 'Ingest video';
+    }
 
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) {
-          const pct = Math.round((e.loaded / e.total) * 100);
-          document.getElementById('upload-bar').style.width = pct + '%';
-          document.getElementById('upload-status-text').textContent = `Uploading... ${pct}%`;
-        }
-      };
-
-      xhr.onload = () => {
-        document.getElementById('upload-idle').classList.remove('hidden');
-        document.getElementById('upload-progress').classList.add('hidden');
-        document.getElementById('file-input').value = '';
-
-        if (xhr.status === 201) {
-          const data = JSON.parse(xhr.responseText);
-          refreshJobs();
-          openDetail(data.job_id);
-        } else {
-          const err = JSON.parse(xhr.responseText);
-          alert('Upload failed: ' + (err.error || 'Unknown error'));
-        }
-      };
-
-      xhr.onerror = () => {
-        document.getElementById('upload-idle').classList.remove('hidden');
-        document.getElementById('upload-progress').classList.add('hidden');
-        alert('Upload failed: network error');
-      };
-
-      xhr.send(form);
+    function showDriveStatus(msg, kind) {
+      const el = document.getElementById('drive-status');
+      const colors = { info: 'text-lf-muted', ok: 'text-green-400', warn: 'text-lf-warning', error: 'text-red-400' };
+      el.className = 'text-sm mt-3 ' + (colors[kind] || 'text-lf-muted');
+      el.textContent = msg;
+      el.classList.remove('hidden');
     }
 
     // ---- Jobs List ----
@@ -408,7 +411,7 @@
     function renderJobsList(jobs) {
       const container = document.getElementById('jobs-list');
       if (jobs.length === 0) {
-        container.innerHTML = '<p class="text-lf-muted text-sm">No jobs yet. Upload a video to get started.</p>';
+        container.innerHTML = '<p class="text-lf-muted text-sm">No jobs yet. Paste a Google Drive link (folder of photos, or a video) above to get started.</p>';
         return;
       }
 
@@ -421,6 +424,11 @@
         const pct = Math.round((j.progress || 0) * 100);
         const size = formatBytes(j.file_size_bytes || 0);
         const time = j.created_at ? new Date(j.created_at * 1000).toLocaleString() : '';
+        const capture = j.current_stage === 'downloading'
+          ? '&middot; <span class="text-lf-warning">⏳ fetching…</span>'
+          : j.input_kind === 'images'
+            ? `&middot; <span class="text-lf-success">📷 ${j.image_count || 0} images</span>`
+            : (j.input_kind === 'video' ? '&middot; <span class="text-lf-accent">🎬 video</span>' : '');
 
         return `
           <div class="bg-lf-surface rounded-lg border border-lf-border p-4 cursor-pointer hover:border-lf-accent/40 transition"
@@ -430,7 +438,7 @@
                 <span class="w-2 h-2 rounded-full ${color} ${j.state === 'running' || j.state.startsWith('stage_') ? 'animate-pulse' : ''}"></span>
                 <div>
                   <p class="font-medium text-sm">${escHtml(j.filename)}</p>
-                  <p class="text-xs text-lf-muted">${time} &middot; ${size}</p>
+                  <p class="text-xs text-lf-muted">${time} &middot; ${size} ${capture}</p>
                 </div>
               </div>
               <div class="flex items-center gap-4">
@@ -727,6 +735,17 @@
 
     // ---- API Key Setup ----
     let apiKeyConfigured = false;
+
+    function loginViaTerminal() {
+      // Copy the login command so the user can paste it into the terminal
+      // (the ttyd iframe is cross-origin, so we can't type into it directly).
+      try {
+        navigator.clipboard && navigator.clipboard.writeText('claude --dangerously-skip-permissions');
+      } catch (e) { /* clipboard may be blocked; the command is shown on-screen anyway */ }
+      switchTab('terminal');
+      // Re-check auth shortly after, so the banner clears once /login completes.
+      setTimeout(checkConfig, 8000);
+    }
 
     function checkConfig() {
       fetch('/api/config')

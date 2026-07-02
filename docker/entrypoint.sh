@@ -60,6 +60,24 @@ mkdir -p /data/output /data/input
 mkdir -p /opt/hf-cache
 chown -R ubuntu:ubuntu /opt/hf-cache 2>/dev/null || true
 
+# Web-terminal Claude login helper. The terminal (ttyd) runs `bash --login` as
+# the non-root ubuntu user, so `claude --dangerously-skip-permissions` is
+# allowed and a subscription login (OAuth) overrides the need for an API key.
+# Provide a `claude-login` shortcut and a one-time hint on interactive shells.
+cat > /etc/profile.d/10-claude-login.sh <<'PROFILE'
+# Vitrine: log into Claude Code from the web terminal (no API key needed).
+claude-login() { command claude --dangerously-skip-permissions "$@"; }
+if [ -n "$BASH_VERSION" ]; then export -f claude-login 2>/dev/null || true; fi
+case "$-" in
+  *i*)
+    printf '\n\033[1;36m● Claude Code\033[0m — log in with your Claude subscription (no API key needed):\n'
+    printf '    run  \033[1;32mclaude-login\033[0m   then type  \033[1;32m/login\033[0m   and accept the bypass-permissions prompt once.\n'
+    printf '    \033[2m(claude-login = claude --dangerously-skip-permissions; the pipeline then auto-runs jobs)\033[0m\n\n'
+    ;;
+esac
+PROFILE
+chmod 0644 /etc/profile.d/10-claude-login.sh
+
 echo "Services starting via supervisord..."
 
 # Start supervisord

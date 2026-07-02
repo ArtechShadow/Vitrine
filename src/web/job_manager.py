@@ -85,6 +85,10 @@ class Job:
     error: str | None = None
     result_archive: str | None = None
     file_size_bytes: int = 0
+    # Capture source (Google Drive ingest). "video" | "images".
+    input_kind: str = "video"
+    input_dir: str = ""       # for image captures: local dir holding the stills
+    image_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -285,10 +289,22 @@ def delete_job(job_id: str) -> bool:
         if output.exists():
             shutil.rmtree(output, ignore_errors=True)
 
-        # Remove input video
-        input_path = Path(job.input_video_path)
-        if input_path.exists():
-            input_path.unlink(missing_ok=True)
+        # Remove input video file (skip empty path — image captures have none)
+        if job.input_video_path:
+            input_path = Path(job.input_video_path)
+            if input_path.exists() and input_path.is_file():
+                input_path.unlink(missing_ok=True)
+
+        # Remove image-capture staging + any per-job Drive scratch dirs
+        for d in (
+            getattr(job, "input_dir", "") or "",
+            str(INPUT_DIR / f"{job_id}_images"),
+            str(INPUT_DIR / f"{job_id}_dl"),
+        ):
+            if d:
+                p = Path(d)
+                if p.exists() and p.is_dir():
+                    shutil.rmtree(p, ignore_errors=True)
 
         logger.info("Deleted job %s", job_id)
         return True

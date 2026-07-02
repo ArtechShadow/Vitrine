@@ -12,8 +12,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -39,6 +41,7 @@ if _src_dir not in sys.path:
 from web.job_manager import (
     INPUT_DIR,
     JobState,
+    append_log,
     cleanup_old_jobs,
     create_job,
     delete_job,
@@ -199,6 +202,267 @@ def upload() -> tuple[Response, int]:
         "file_size_bytes": file_size,
         "state": job.state,
     }), 201
+
+
+# ---------------------------------------------------------------------------
+# Ingest a capture from a Google Drive share URL
+#
+# Primary path for the web UI: a curator pastes a shareable Drive link
+# ("Anyone with the link"). Two capture modes, in priority order:
+#   1. RAW / still IMAGES — PREFERRED. If the link is a folder that contains
+#      images in its root or ANY sub-folder, those images are pulled and used
+#      directly as capture frames; any video present is ignored. Stills avoid
+#      the motion blur that dominates video-frame captures, so they are the
+#      better SfM input (see docs/blur-aware frame-selection notes).
+#   2. VIDEO — fallback. Used only when no images are found, or when the link
+#      points at a single video file.
+# Downloads run in a background thread via gdown (public links, no creds).
+# For service-account / bulk folder captures see /api/ingest/drive (rclone).
+# ---------------------------------------------------------------------------
+
+
+def _parse_drive_url(url: str) -> tuple[str | None, str]:
+    """Extract a Google Drive file id and kind ('file' | 'folder') from a URL.
+
+    Returns (None, "") if no id can be recognised.
+    """
+    url = url.strip()
+    m = re.search(r"/folders/([A-Za-z0-9_-]{10,})", url)
+    if m:
+        return m.group(1), "folder"
+    m = re.search(r"/file/d/([A-Za-z0-9_-]{10,})", url)
+    if m:
+        return m.group(1), "file"
+    m = re.search(r"[?&]id=([A-Za-z0-9_-]{10,})", url)  # uc?export=download&id=, open?id=
+    if m:
+        return m.group(1), "file"
+    m = re.search(r"/d/([A-Za-z0-9_-]{10,})", url)  # /d/<id> (docs-style)
+    if m:
+        return m.group(1), "file"
+    return None, ""
+
+
+# Camera-raw + high-quality still formats treated as an "images" capture.
+IMAGE_EXTENSIONS = {
+    # camera raw
+    "dng", "cr2", "cr3", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf",
+    "rw2", "pef", "srw", "x3f", "erf", "kdc", "dcr", "raw", "3fr", "fff",
+    "iiq", "mos", "mef", "gpr",
+    # stills
+    "jpg", "jpeg", "png", "tif", "tiff", "heic", "heif", "webp", "bmp",
+}
+# Formats COLMAP / the SfM stage can read directly (others need decoding first).
+COLMAP_NATIVE_EXTENSIONS = {"jpg", "jpeg", "png", "tif", "tiff", "bmp"}
+
+
+def _ext(name: str) -> str:
+    return name.rsplit(".", 1)[-1].lower() if "." in name else ""
+
+
+def _classify(name: str) -> str:
+    """Return 'image' | 'video' | 'other' for a filename."""
+    e = _ext(name)
+    if e in IMAGE_EXTENSIONS:
+        return "image"
+    if e in ALLOWED_EXTENSIONS:
+        return "video"
+    return "other"
+
+
+def _fail_job(job_id: str, msg: str) -> None:
+    logger.error("Drive ingest job %s failed: %s", job_id, msg)
+    append_log(job_id, f"ERROR: {msg}")
+    update_job(job_id, state=JobState.FAILED, error=msg)
+
+
+def _folder_ingest_worker(job_id: str, folder_url: str) -> None:
+    """List a public Drive folder, then prefer images, else fall back to video."""
+    import gdown  # 6.x: download_folder(skip_download=True) lists without downloading
+
+    try:
+        listing = gdown.download_folder(
+            url=folder_url, skip_download=True, quiet=True, use_cookies=False
+        )
+    except Exception as exc:  # noqa: BLE001
+        _fail_job(job_id, f"Could not read Drive folder (is it 'Anyone with the link'?): {exc}")
+        return
+    if not listing:
+        _fail_job(job_id, "Drive folder is empty or not publicly shared.")
+        return
+
+    images = [f for f in listing if _classify(os.path.basename(f.path)) == "image"]
+    videos = [f for f in listing if _classify(os.path.basename(f.path)) == "video"]
+    append_log(
+        job_id,
+        f"Folder scan: {len(listing)} files — {len(images)} image(s), {len(videos)} video(s)",
+    )
+
+    if images:
+        _pull_images(job_id, images, len(videos))
+    elif videos:
+        append_log(job_id, "No images found — falling back to video capture")
+        _pull_video(job_id, videos[0].id, os.path.basename(videos[0].path))
+    else:
+        _fail_job(job_id, "No raw images or videos found in that Drive folder.")
+
+
+def _pull_images(job_id: str, images: list, n_videos: int) -> None:
+    """Download image files (preferred capture) into a per-job dir and queue."""
+    import gdown
+
+    img_dir = INPUT_DIR / f"{job_id}_images"
+    img_dir.mkdir(parents=True, exist_ok=True)
+    got = 0
+    for f in images:
+        base = os.path.basename(f.path)
+        safe = secure_filename(base) or f"{f.id}.{_ext(base) or 'img'}"
+        out = img_dir / safe
+        try:
+            res = gdown.download(id=f.id, output=str(out), quiet=True)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("image download failed (%s): %s", f.id, exc)
+            res = None
+        if res and out.exists():
+            got += 1
+
+    if got == 0:
+        _fail_job(job_id, "Found images but none could be downloaded (check sharing).")
+        return
+
+    files = [p for p in img_dir.iterdir() if p.is_file()]
+    size = sum(p.stat().st_size for p in files)
+    exts = sorted({_ext(p.name) for p in files})
+    update_job(
+        job_id,
+        input_kind="images",
+        input_dir=str(img_dir),
+        image_count=got,
+        input_video_path="",
+        filename=f"{got} raw images (Drive folder)",
+        file_size_bytes=size,
+        current_stage="",
+    )
+    append_log(
+        job_id,
+        f"Preferred capture: pulled {got} raw/still image(s) ({size / 1e6:.1f} MB); "
+        f"ignoring {n_videos} video(s). Formats: {', '.join(exts)}",
+    )
+    needs_conv = [e for e in exts if e not in COLMAP_NATIVE_EXTENSIONS]
+    if needs_conv:
+        append_log(
+            job_id,
+            f"NOTE: {', '.join(needs_conv)} are not COLMAP-native — decode to "
+            "JPG/PNG/TIFF before SfM (raw/HEIC need demosaicing/conversion).",
+        )
+    if not start_pipeline(job_id):
+        _fail_job(job_id, "Failed to queue pipeline")
+
+
+def _pull_video(job_id: str, file_id: str, hint_name: str) -> None:
+    """Download a single video (fallback capture) and queue."""
+    import gdown
+
+    dl_dir = INPUT_DIR / f"{job_id}_dl"
+    dl_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        out = gdown.download(id=file_id, output=str(dl_dir) + os.sep, quiet=True, fuzzy=True)
+    except Exception as exc:  # noqa: BLE001
+        _fail_job(job_id, f"Video download failed: {exc}")
+        return
+    if not out or not os.path.exists(out):
+        _fail_job(job_id, "Video download failed (is the link 'Anyone with the link'?).")
+        return
+
+    name = os.path.basename(out)
+    if _classify(name) != "video":
+        _fail_job(job_id, f"Downloaded file is not a supported video: {name}")
+        return
+    size = os.path.getsize(out)
+    update_job(job_id, input_kind="video", input_video_path=out, filename=name,
+               file_size_bytes=size, current_stage="")
+    append_log(job_id, f"Video capture downloaded: {name} ({size / 1e6:.1f} MB)")
+    if not start_pipeline(job_id):
+        _fail_job(job_id, "Failed to queue pipeline")
+
+
+def _file_ingest_worker(job_id: str, file_id: str) -> None:
+    """Download a single Drive file; classify as image vs video, then queue."""
+    import gdown
+
+    dl_dir = INPUT_DIR / f"{job_id}_dl"
+    dl_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        out = gdown.download(id=file_id, output=str(dl_dir) + os.sep, quiet=True, fuzzy=True)
+    except Exception as exc:  # noqa: BLE001
+        _fail_job(job_id, f"Download failed: {exc}")
+        return
+    if not out or not os.path.exists(out):
+        _fail_job(job_id, "Download failed (is the link 'Anyone with the link'?).")
+        return
+
+    name = os.path.basename(out)
+    kind = _classify(name)
+    size = os.path.getsize(out)
+    if kind == "video":
+        update_job(job_id, input_kind="video", input_video_path=out, filename=name,
+                   file_size_bytes=size, current_stage="")
+        append_log(job_id, f"Video capture downloaded: {name} ({size / 1e6:.1f} MB)")
+    elif kind == "image":
+        update_job(job_id, input_kind="images", input_dir=str(dl_dir), image_count=1,
+                   input_video_path="", filename=name, file_size_bytes=size, current_stage="")
+        append_log(job_id, f"Single image link — treating as a 1-image capture: {name}")
+    else:
+        _fail_job(job_id, f"Unsupported file type: {name}")
+        return
+    if not start_pipeline(job_id):
+        _fail_job(job_id, "Failed to queue pipeline")
+
+
+@app.route("/ingest/url", methods=["POST"])
+def ingest_url() -> tuple[Response, int]:
+    """Accept a Google Drive share URL and queue a capture.
+
+    A folder link prefers raw/still images (in its root or any sub-folder) and
+    ignores video; a file link (or an image-less folder) uses video. JSON/form
+    param ``url``. Returns 202 with the job_id; work runs in the background and
+    the job's state reflects progress.
+    """
+    data = request.get_json(silent=True) or request.form
+    url = (data.get("url") or "").strip()
+    if not url:
+        return jsonify({"error": "No URL provided"}), 400
+
+    drive_id, kind = _parse_drive_url(url)
+    if not drive_id:
+        return jsonify({
+            "error": "Could not find a Google Drive id in that link. Paste a file "
+                     "link (…/file/d/<ID>/view) or a folder link (…/folders/<ID>).",
+        }), 400
+
+    INPUT_DIR.mkdir(parents=True, exist_ok=True)
+    job = create_job(filename=f"gdrive_{drive_id}", input_video_path="", file_size_bytes=0)
+    update_job(job.job_id, current_stage="downloading")
+
+    if kind == "folder":
+        append_log(job.job_id, f"Scanning Google Drive folder (images preferred): {url}")
+        thread = threading.Thread(
+            target=_folder_ingest_worker, args=(job.job_id, url), daemon=True
+        )
+    else:
+        append_log(job.job_id, f"Downloading Google Drive file: {url}")
+        thread = threading.Thread(
+            target=_file_ingest_worker, args=(job.job_id, drive_id), daemon=True
+        )
+    thread.start()
+
+    logger.info("Drive ingest queued: job=%s id=%s kind=%s", job.job_id, drive_id, kind)
+    return jsonify({
+        "job_id": job.job_id,
+        "state": "downloading",
+        "source": "gdrive",
+        "kind": kind,
+        "drive_id": drive_id,
+    }), 202
 
 
 # ---------------------------------------------------------------------------
