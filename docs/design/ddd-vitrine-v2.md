@@ -49,23 +49,54 @@ ArtiFixer is **not** a permanent process — it's launched per-job as `artifixer
 
 ## 4. Operator UI — component design (extends `src/web`)
 
-Reuse today's Flask app + `viewer.html`; add:
+Reuse today's Flask app + `viewer.html`; add four small Flask blueprints (`scenes_api`, `files_api`, `zip_api`, `splat_api`) registered by `app.py` — additive, never replacing the existing job-centric routes that `index.html`/`viewer.html` and the orchestrator callbacks depend on.
 
-- **Ingest**: `POST /api/ingest/upload` (chunked multipart, drag-dropped DNG/stills → `INPUT_DIR/<job>_images/` → existing `image_decoder.decode_directory` → `queue_job`). Primary pane = dropzone. Drive pull (`/ingest/url`) demoted to a collapsed "or pull a link".
-- **Run browser**: `GET /api/runs` (list `output/*` + capture.json summary), `GET /api/runs/<id>/tree` (path-jailed file tree), `GET /api/runs/<id>/file?path=…` (range-served preview: images inline, text/log inline, `.ply/.ksplat` → `viewer.html`, `.glb/.obj` → model viewer).
-- **Zip**: `GET /api/runs/<id>/zip?include=all|assets` → `zipstream` (streamed, never buffered); default excludes regenerable intermediates (COLMAP db, undistorted images, raw frames) unless `include=all`.
+**Endpoint summary**
+
+- **Ingest**:
+  - `POST /api/scenes/upload` — chunked multipart (field `file` + optional `title`/`fps`/`qa_preset`); aliases the existing `/upload` path; returns `{scene_id, metadata:SceneMetadata}`. Legacy `POST /upload` (field `video`) kept unchanged.
+  - `POST /api/scenes/upload-images` — multipart batch stills (jpg/png/DNG/HEIC → `INPUT_DIR/<job>_images/` → `image_decoder.decode_directory` → enqueue); 2 GB total cap, `secure_filename`, per-file extension allow-list; returns `{scene_id, metadata}`.
+  - `POST /api/scenes/upload-zip` — multipart zip capture bundle; extracted with a zip-slip path guard and decompressed-size cap into a new job input dir; returns `{scene_id, metadata}`.
+  - `POST /api/import/google-drive` — JSON `{url, contentType?, title?}`; reuses existing Drive/gdown ingest logic; returns `{scene_id, state:'downloading'}`. No new credential surface.
+  - Legacy `POST /ingest/url` kept as-is.
+- **Scenes alias facade** (`scenes_api.py`): `scene_id` == `job_id` 1:1; all `/api/scenes/*` routes delegate to `job_manager`. Error shape is always `{detail, error}` (never bare strings) so the SPA can render them uniformly. Key aliases:
+  - `GET /api/scenes` — list; synthesized from `job_manager.list_jobs()` + on-disk outputs (thumbnail via derivatives URL).
+  - `GET /api/scenes/<id>` — detail; synthesized from `Job.to_dict()` + `ksplat_path` discovery.
+  - `GET /api/scenes/<id>/progress?job=` — polling fallback only (SSE `GET /stream/<id>` is canonical); returns `ProgressInfo{status,stage,stage_label,stage_index,stage_count,percent,message,log_tail}`.
+  - `DELETE /api/scenes/<id>` — delegates to existing `delete_job` (cancels if running).
+  - `POST /api/scenes/<id>/export` — returns `{downloadUrl:'/api/runs/<id>/zip'}`.
+- **Run browser** (`files_api.py`): `GET /api/runs` (list `output/*` + capture.json summary), `GET /api/runs/<id>/tree` (path-jailed recursive `[{path,size,kind}]`, dotfiles + `.secrets` excluded), `GET /api/runs/<id>/file?path=…` (range-served preview: images/text inline, `.glb` → mesh viewer, `.ply/.ksplat` → splat viewer).
+  - `GET /api/scenes/<id>/frames?limit=&offset=` — paginated frame list from `output/<id>/frames/` or input-images dir; returns `{total,offset,limit,frames:string[]}`.
+  - `GET /api/scenes/<id>/frames/<name>` — image bytes; `safe_join` + extension allow-list, path-jailed to `output/<id>/`.
+  - `GET /api/scenes/<id>/derivatives/<path>` — `contact_sheet.jpg`, `sparse_preview.jpg`, etc.; path-jailed, dotfiles excluded.
+- **Zip** (`zip_api.py`): `GET /api/runs/<id>/zip?include=all|assets` → `zipstream-ng` (streamed, constant memory); default excludes regenerable intermediates (COLMAP db, undistorted images, raw frames) unless `include=all`. Legacy `GET /download/<job_id>` kept for the current Jinja UI.
+- **Splat serve** (`splat_api.py`):
+  - `GET /api/scenes/<id>/splat/<filename>` — Range- and ETag-served splat bytes consumed by `@mkkellogg/gaussian-splats-3d` `addSplatScene()`. Discovery order: `output/<id>/web/scene.ksplat` → `model/*.ply` → `*.splat`; `Content-Type: application/octet-stream`. Path-traversal-guarded; mirrors the existing `/mesh/<id>` pattern. **This is the route absent today that unlocks in-browser 3DGS viewing.**
+  - `GET /splat/<job_id>` — convenience 302/serve to the best available splat for the job (for `viewer_splat.html`).
+- **System and tooling stats**:
+  - `GET /api/system/stats` — `SystemStats{gpu_available,gpu_name,vram_total_mb,vram_used_mb,cpu_percent,ram_used_mb,ram_total_mb}` via `pynvml`/`psutil` best-effort; all numeric fields zero and `gpu_available:false` when unavailable. Optional dep: `pynvml`.
+  - `GET /api/tools` — availability flags; `nvidia_artifixer`/`lingbot_map`/`ppisp` always report `available:false` so SPA panels degrade gracefully.
 - **Inspection endpoints** (replace tab6 `docker exec`): `GET /api/diskusage` (per-mount + per-run + image-layer sizes), `GET /api/health/processes` (each service's user+venv+GPU), `GET /api/tools/lichtfeld/version`.
-- Security: all `path=` params resolved and asserted to stay under `output/` (jail); no write endpoints on the browser.
+- Security: all `path=` params resolved and asserted to stay under `output/` (jail); dotfiles and `.secrets` entries never served. No write endpoints on the run-browser paths.
+
+**File browser UX**
+
+The runs list (`/api/runs`) renders as a searchable card grid following the ArchiveLibrary pattern from community PR #6. Client-side search and filter (title, status, date) operate over the full `/api/runs` response — no server-side search endpoint needed. Each card shows a thumbnail (from `derivatives/contact_sheet.jpg` if present), run status badge, stage progress, and quick-action buttons (preview, download zip, open viewer). The card grid delegates to `/api/runs/<id>/tree` for per-run file browsing and to `/api/scenes/<id>/splat/<filename>` for in-browser 3DGS preview via `gaussian-splats-3d`. The 3D viewer (`viewer_splat.html`) embeds `@mkkellogg/gaussian-splats-3d` and Three.js from `src/web/static/vendor/` (no CDN; `sharedMemoryForWorkers:false` so no COOP/COEP headers are required on the Flask server).
 
 ## 5. Domain model — `Run` (read model for the browser)
 
 ```
 Run{ id, created_at, kind: images|video, source: dropzone|gdrive,
      state, stages[], capture{decode manifest, image_count},
-     artifacts{ colmap?, splat_ply?, ksplat?, objects[glb], scene_fbx?, previews[] },
+     artifacts{ colmap?, splat_ply?, ksplat?, ksplat_path?: string,
+                objects[glb], scene_fbx?, previews[] },
      size_bytes, metrics{} }
 ```
 Built by scanning `output/<id>/` + `capture.json` + job JSON. No new store — the filesystem *is* the store.
+
+`ksplat_path` is the relative path (under `output/<id>/`) to the best available web-format splat, resolved in the same discovery order as the splat endpoint: `web/scene.ksplat` → `model/*.ply` → `*.splat`. Present only once at least one splat artifact exists; consumed by the `/api/scenes/<id>` detail response and the card-grid thumbnail logic.
+
+**Client-side 3D viewer deps**: `@mkkellogg/gaussian-splats-3d` and `three` are bundled at `src/web/static/vendor/` — no CDN dependency. The viewer is initialised with `sharedMemoryForWorkers: false` so no `Cross-Origin-Opener-Policy`/`Cross-Origin-Embedder-Policy` headers are required on the Flask server.
 
 ## 6. Migration / phasing (each phase independently shippable, tab6-rebuild + network-verify)
 

@@ -458,6 +458,8 @@ curl -X POST http://localhost:7860/api/job/JOB_ID/complete \
 
 ### REST API
 
+The web UI at :7860 now includes a file browser, per-run zip download, and 3D splat viewer (PR #6 UX consolidation, ADR-023); it binds 127.0.0.1 by default — set LFS_WEB_HOST only for container-bus access.
+
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
 | POST | `/api/job/<id>/stage` | Report stage progress |
@@ -465,6 +467,16 @@ curl -X POST http://localhost:7860/api/job/JOB_ID/complete \
 | POST | `/api/job/<id>/complete` | Mark job done |
 | GET | `/status/<id>` | Job detail |
 | GET | `/api/job/<id>/previews` | List preview images |
+| GET | `/api/runs` | Richer run list synthesized from job_manager + on-disk outputs (thumbnail via derivatives URL) |
+| GET | `/api/runs/<id>/tree` | Recursive file tree for output/<id>/; dotfiles + .secrets excluded; [{path,size,kind}] |
+| GET | `/api/runs/<id>/zip` | Streamed zip (zipstream-ng, constant memory); default excludes colmap db/raw frames; `?include=all` for full tree |
+| GET | `/api/runs/<id>/file?path=` | Range-served file preview path-jailed to output/<id>/; images/text inline, .glb→mesh viewer, .ply/.ksplat→splat viewer |
+| GET | `/api/scenes/*` | SPA alias facade (scene_id == job_id 1:1): list scenes, get scene detail, progress polling, frames list, derivatives, delete, export; SSE /stream/<id> remains canonical progress channel |
+| GET | `/api/scenes/<id>/splat/<filename>` | Range/ETag-served .ksplat/.ply for gaussian-splats-3d viewer; discovery order: output/<id>/web/scene.ksplat → model/*.ply → *.splat; traversal-guarded |
+| GET | `/api/system/stats` | System stats via pynvml/psutil best-effort; returns zeros + gpu_available:false when unavailable |
+| POST | `/api/scenes/upload-images` | Batch stills (jpg/png/DNG/HEIC) multipart → image_decoder.decode_directory → enqueue; 2 GB cap, secure_filename, ext allow-list |
+| POST | `/api/scenes/upload-zip` | Zip capture bundle multipart; extracted with zip-slip guard + decompressed-size cap into new job input dir |
+| POST | `/api/import/google-drive` | Drive URL ingest via existing gdown logic (images-preferred); returns {scene_id, state:'downloading'}; no new secret surface |
 
 ### MANDATORY: Save preview images
 

@@ -63,7 +63,7 @@ router, the option matrix, and the research behind each choice — lives in
 | **Scene → mesh** | **2DGS / PGSR** (SOTA surface) or TSDF → texture-bake (xatlas) → FBX |
 | **Objects** | SAM3 concept-segment → **TRELLIS.2** `hull_e2e` (primary) / Hunyuan3D-2.1 / SAM3D → textured GLB → FBX |
 | **Enhancers** *(capture-conditional)* | ArtiFixer (floaters/holes) · deblur · densification |
-| **Delivery** | UE 5.8 game-asset import (Nanite); embed object FBXs in the room; proxy collision |
+| **Delivery** | UE 5.8 game-asset import (Nanite); embed object FBXs in the room; proxy collision; in-browser `.ksplat` viewer |
 
 ## Agentic internal controller *(evolving toward)*
 
@@ -147,7 +147,7 @@ vendor/lichtfeld-studio/   ← git submodule, pinned @ v0.5.3 (native 3DGS train
 ```
 Vitrine/
 ├── src/pipeline/     ← the Python pipeline (capture QA → SfM → 3DGS → mesh/splat → objects → UE)
-├── src/web/          ← Flask web UI (:7860)
+├── src/web/          ← Flask web UI (:7860): ingest, run browser with previews, embedded 3D splat viewer, per-run zip
 ├── scripts/          ← pipeline tooling, mesh/splat/UE drivers, bridges
 ├── unreal/           ← self-contained UE 5.8 overlay (engine, runtime, NanoGS plugin, Dockerfiles)
 ├── onboarding/       ← Rust/Axum exhibit-manifest wizard (:8088)
@@ -157,6 +157,20 @@ Vitrine/
 └── vendor/
     └── lichtfeld-studio/   ← vendored 3DGS tool (submodule @ v0.5.3)
 ```
+
+## Web UI features
+
+The Flask web service (`src/web/`, `:7860`) is loopback-only (`127.0.0.1`) and reached via SSH tunnel
+(ADR-022). Three features consolidated from the ArchiveSpace community PR (ADR-023):
+
+- **File browser with previews** — per-run output tree (`/api/runs/<id>/tree`) with range-served image,
+  mesh, and splat previews; frame listing with thumbnails.
+- **Per-run zip download** — streamed, constant-memory zip of each run's assets
+  (`/api/runs/<id>/zip`); the legacy `/download/<job_id>` route is preserved.
+- **3D splat viewer** — hybridises `@mkkellogg/gaussian-splats-3d` with Vitrine's `.ksplat` output
+  and the existing `/viewer` route; served from `/api/scenes/<id>/splat/<filename>` (range + ETag).
+
+See `research/decisions/adr-023-*.md` for the full contract and security analysis.
 
 ## Status
 
@@ -175,6 +189,7 @@ Prerequisites and the full build are in [`docs/build/`](docs/build/). Common ent
 ```bash
 git clone --recurse-submodules <this-repo>                  # pulls the vendored LichtFeld tool
 docker compose -f docker-compose.consolidated.yml up -d     # bring up the stack
+ssh -N -L 7860:localhost:7860 <user>@<rig>                  # then open http://localhost:7860 (ADR-022: loopback-only)
 scripts/run_comfyui.sh                                       # owner ComfyUI
 python -m pipeline.sota_registry check                       # SOTA preflight (weights/VRAM/pins)
 ```

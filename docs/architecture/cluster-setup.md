@@ -4,6 +4,16 @@
 
 The pipeline runs as a multi-container stack on a dedicated workstation with dual RTX 6000 Ada GPUs. The two ComfyUI workloads (`gaussian-toolkit` + `vitrine-comfyui`) share GPU 0; the mesh/Unreal sidecars (`milo`, `come`, `unreal`) run on GPU 1. Containers reach each other by service name over two Docker networks (`v2g-net` internal, `visionclaw_network` shared), so current-state access uses service DNS / localhost rather than a hardcoded host IP.
 
+### Operator access
+
+Port 7860 is loopback-only (`127.0.0.1`). Reach it from your workstation via an SSH LocalForward tunnel — never expose it on `0.0.0.0` (ADR-022):
+
+```bash
+ssh -N -L 7860:localhost:7860 <user>@<rig>
+```
+
+Then open `http://localhost:7860` in your browser. The tunnel can be left running in the background; kill it with `Ctrl-C` when done.
+
 ### Host Machine
 
 | Component | Specification |
@@ -19,7 +29,7 @@ The pipeline runs as a multi-container stack on a dedicated workstation with dua
 
 | Host Port | Container Port | Service | Purpose |
 |-----------|----------------|---------|---------|
-| 7860 | 7860 | Web UI (Flask) | Video upload, job management, pipeline control |
+| 7860 | 7860 | Web UI (Flask) | Ingest (raw-stills drag-drop, zip bundle, Drive URL), run browser with file tree + thumbnail previews, per-run streamed zip download, embedded 3D splat viewer (.ksplat/.ply), job management. Loopback-only (127.0.0.1); access via SSH LocalForward per ADR-022. |
 | 7681 | 7681 | Web terminal (ttyd) | Orchestrator shell |
 | 8200 | 8188 | ComfyUI (`vitrine-comfyui`) | TRELLIS.2 / Hunyuan3D-2.1 / SAM3D nodes, FLUX.2 inpainting |
 | 45677 | 45677 | LichtFeld MCP | 70+ JSON-RPC tools for agent control |

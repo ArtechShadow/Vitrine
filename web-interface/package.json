@@ -1,0 +1,28 @@
+{
+  "name": "archivespace-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "build:preview": "tsc -b && vite build --mode preview",
+    "preview": "vite preview",
+    "preview:ui": "npm run build:preview && vite preview"
+  },
+  "dependencies": {
+    "@mkkellogg/gaussian-splats-3d": "^0.4.6",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.1.0",
+    "three": "^0.175.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/three": "^0.185.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.5"
+  }
+}

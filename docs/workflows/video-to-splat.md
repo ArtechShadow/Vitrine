@@ -55,17 +55,53 @@ USD Scene + Per-Object PLY + HTML Viewer
 
 ## Web Upload Interface
 
-Upload videos directly via the web interface:
+Access the web UI via SSH tunnel:
 
-```
-http://localhost:7860
+```bash
+ssh -N -L 7860:localhost:7860 <user>@<rig>
 ```
 
-The web UI provides:
-- Drag-and-drop video upload
-- Pipeline job management
-- Progress monitoring
-- Result download
+Then open `http://localhost:7860` in your browser. The service binds
+`127.0.0.1:7860` only (never `0.0.0.0`); the SSH tunnel is the sole
+external access path. Container-to-container access on `v2g-net` /
+`visionclaw_network` uses the `LFS_WEB_HOST` env opt-in.
+
+The ingest panel accepts four input modes in a wizard-style multi-step flow:
+
+1. **Video upload** — drag-drop or file-pick an `.mp4`/`.mov`; set title,
+   target FPS, and QA preset (fast / balanced / quality).
+2. **Raw stills drag-drop** — batch JPEG, PNG, DNG, or HEIC files; the
+   pipeline decodes and decompresses them via `image_decoder` before enqueue
+   (2 GB cap per batch, secure filename + extension allow-list enforced).
+3. **Zip bundle** — upload a capture bundle `.zip`; extracted server-side
+   with zip-slip guard and decompressed-size cap into a new job input directory.
+4. **Google Drive URL** — paste a Drive share link; the backend reuses the
+   existing `gdown`-based ingest path (images preferred over video).
+
+After submission the ingest panel switches to a live progress view driven by
+the SSE channel (`/stream/<job_id>`). Stages and percent-complete are updated
+in real time; polling fallback (`/api/scenes/<id>/progress`) is available for
+clients that cannot consume SSE.
+
+### Post-run flow
+
+Once the pipeline completes:
+
+- **Runs library** (`/library`) — lists every run with status badge,
+  thumbnail derived from the contact sheet, and one-click actions.
+- **File browser** — expand a run card to browse the output tree with
+  inline previews; images and text open in-page, `.glb` files open in the
+  mesh viewer, and `.ply`/`.ksplat` files open in the 3D splat viewer.
+- **3D splat viewer** — the hybridised viewer (`/splat/<job_id>`) serves
+  the best available splat asset for the run (discovery order:
+  `output/<id>/web/scene.ksplat` → `model/*.ply` → `*.splat`) and renders
+  it with `@mkkellogg/gaussian-splats-3d`; the LichtFeld native visualizer
+  can be launched separately for full editing capability.
+- **Streamed zip download** — the "Download run" button hits
+  `/api/runs/<id>/zip` (streamed via `zipstream-ng`, constant memory);
+  `include=all` query param includes the full output tree; the default
+  excludes COLMAP database, undistorted frames, and raw frame cache.
+  The legacy `/download/<job_id>` route is preserved for the existing Jinja UI.
 
 ## Step-by-Step Manual Pipeline
 

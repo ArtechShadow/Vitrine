@@ -1,0 +1,29 @@
+{
+  "name": "vitrine-web-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "description": "Vitrine web SPA — capture-adaptive video/photo to 3DGS pipeline UI. Served same-origin by the loopback Flask app (src/web/app.py) at 127.0.0.1:7860.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@mkkellogg/gaussian-splats-3d": "0.4.7",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "react-router-dom": "7.18.1",
+    "three": "0.185.1"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@types/three": "0.185.0",
+    "@vitejs/plugin-react": "6.0.3",
+    "typescript": "6.0.3",
+    "vite": "8.1.3"
+  }
+}

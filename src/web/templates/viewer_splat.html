@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<!--
+  SPDX-FileCopyrightText: 2026 LichtFeld Studio Authors
+  SPDX-License-Identifier: GPL-3.0-or-later
+
+  Vanilla-JS port of the ArchiveSpace SPA's SplatViewer.tsx, driving a
+  locally-vendored @mkkellogg/gaussian-splats-3d Viewer. Every asset is
+  same-origin from /static/vendor/ — ZERO CDN egress. sharedMemoryForWorkers
+  is false and gpuAcceleratedSort is false, so no COOP/COEP headers are needed
+  and this renders fine behind the loopback SSH tunnel.
+
+  Rendered by splat_api.viewer_splat_page; embeddable as an <iframe> from
+  viewer.html. On teardown (pagehide, or parent calling __disposeSplatViewer)
+  the gs3d Viewer is disposed and its root removed so WebGL contexts / sort
+  workers do not leak across repeated open/close cycles.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Splat -- {{ filename }}</title>
+  <style>
+    :root {
+      --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a;
+      --accent: #6366f1; --accent-light: #818cf8;
+      --text: #e2e8f0; --muted: #94a3b8; --danger: #f87171;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: var(--bg); color: var(--text); overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    #stage { position: absolute; inset: 0; }
+    /* gaussian-splats-3d appends a <canvas> into this host; make it fill. */
+    #canvas-host { position: absolute; inset: 0; }
+    #canvas-host canvas { display: block; width: 100% !important; height: 100% !important; }
+    .splat-library-root { position: absolute; inset: 0; }
+
+    .toolbar {
+      position: absolute; top: 0; left: 0; right: 0; z-index: 5;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; padding: 10px 14px; pointer-events: none;
+    }
+    .toolbar > * { pointer-events: auto; }
+    .title { font-size: 12px; color: var(--muted);
+      background: rgba(26, 29, 39, 0.82); border: 1px solid var(--border);
+      padding: 4px 10px; border-radius: 6px; backdrop-filter: blur(6px);
+      max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .actions { display: flex; align-items: center; gap: 8px; }
+
+    .pill {
+      font-size: 11px; color: var(--text); background: rgba(99, 102, 241, 0.18);
+      border: 1px solid var(--accent); padding: 4px 10px; border-radius: 999px;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .pill .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      border: 2px solid var(--accent-light); border-top-color: transparent;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .segmented { display: inline-flex; border: 1px solid var(--border);
+      border-radius: 6px; overflow: hidden; background: rgba(26, 29, 39, 0.82);
+      backdrop-filter: blur(6px); }
+    .segmented button {
+      appearance: none; border: none; background: transparent; color: var(--muted);
+      font: inherit; font-size: 11px; padding: 5px 11px; cursor: pointer;
+      border-right: 1px solid var(--border);
+    }
+    .segmented button:last-child { border-right: none; }
+    .segmented button:hover { color: var(--text); }
+    .segmented button.active { background: var(--accent); color: #fff; }
+
+    .center {
+      position: absolute; inset: 0; z-index: 4; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; text-align: center; gap: 10px;
+      padding: 24px; pointer-events: none;
+    }
+    .center.hidden { display: none; }
+    .spinner {
+      width: 40px; height: 40px; border-radius: 50%;
+      border: 2px solid var(--accent); border-top-color: transparent;
+      animation: spin 0.9s linear infinite;
+    }
+    .center p { margin: 0; font-size: 13px; color: var(--muted); max-width: 32ch; }
+    .center p.error { color: var(--danger); }
+
+    .hint {
+      position: absolute; bottom: 10px; left: 0; right: 0; z-index: 5;
+      text-align: center; font-size: 11px; color: var(--muted); pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <div id="canvas-host"></div>
+
+    <div class="toolbar">
+      <span class="title" title="{{ filename }}">{{ filename }}</span>
+      <div class="actions">
+        <span id="loading-pill" class="pill" style="display:none"><span class="dot"></span>Loading scene…</span>
+        <div class="segmented" role="group" aria-label="Camera view">
+          <button type="button" data-view="front" class="active">Front</button>
+          <button type="button" data-view="top">Top</button>
+          <button type="button" data-view="side">Side</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="center" class="center">
+      <div id="center-spinner" class="spinner"></div>
+      <p id="center-msg">Preparing splat viewer…</p>
+    </div>
+
+    <div class="hint">Drag to rotate · middle-drag to pan · scroll to zoom · Front / Top / Side to reframe</div>
+  </div>
+
+  <!-- Local-only module resolution: bare "three" -> vendored three build.
+       gaussian-splats-3d bundles its own OrbitControls, so "three" is its
+       only external specifier. No CDN, no importmap for anything else. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "/static/vendor/three/three.module.min.js"
+    }
+  }
+  </script>
+
+  <script id="splat-config" type="application/json">
+  {
+    "splatUrl": {{ splat_url | tojson }},
+    "splatFormat": {{ splat_format | tojson }},
+    "splatName": {{ splat_name | tojson }},
+    "downloadUrl": {{ download_url | tojson }}
+  }
+  </script>
+
+  <script type="module">
+    import * as GaussianSplats3D from "/static/vendor/gaussian-splats-3d/gaussian-splats-3d.module.js";
+
+    const CONFIG = JSON.parse(document.getElementById("splat-config").textContent);
+
+    // ---- constants ported from SplatViewer.tsx -------------------------------
+    const DEFAULT_VIEW_ZOOM = 3;
+    const ORIENTATIONS = {
+      front: { position: [0, 1.35, 2.85], up: [0, 1, 0] },
+      top:   { position: [0, 3.35, 0.15], up: [0, 0, -1] },
+      side:  { position: [3.05, 1.15, 0], up: [0, 1, 0] },
+    };
+    const CAMERA_DISTANCE_MULTIPLIER = 1;
+
+    const FORMAT_MAP = {
+      ksplat: GaussianSplats3D.SceneFormat.KSplat,
+      splat:  GaussianSplats3D.SceneFormat.Splat,
+      ply:    GaussianSplats3D.SceneFormat.Ply,
+      spz:    GaussianSplats3D.SceneFormat.Spz,
+    };
+
+    function scalePosition(position, multiplier) {
+      const z = multiplier / DEFAULT_VIEW_ZOOM;
+      return [position[0] * z, position[1] * z, position[2] * z];
+    }
+    function getNavigationMultiplier() {
+      // No per-scene scale in this single-scene viewer -> unit multiplier.
+      return CAMERA_DISTANCE_MULTIPLIER;
+    }
+    function setVec3(target, v) {
+      if (target && target.set) target.set(v[0], v[1], v[2]);
+      else if (target) { target.x = v[0]; target.y = v[1]; target.z = v[2]; }
+    }
+
+    // ---- DOM -----------------------------------------------------------------
+    const host = document.getElementById("canvas-host");
+    const centerEl = document.getElementById("center");
+    const centerSpinner = document.getElementById("center-spinner");
+    const centerMsg = document.getElementById("center-msg");
+    const loadingPill = document.getElementById("loading-pill");
+    const viewButtons = Array.from(document.querySelectorAll(".segmented button"));
+
+    function showCenter(message, isError) {
+      centerMsg.textContent = message;
+      centerMsg.className = isError ? "error" : "";
+      centerSpinner.style.display = isError ? "none" : "block";
+      centerEl.classList.remove("hidden");
+    }
+    function hideCenter() { centerEl.classList.add("hidden"); }
+    function setLoading(on) { loadingPill.style.display = on ? "inline-flex" : "none"; }
+
+    // ---- viewer lifecycle ----------------------------------------------------
+    let viewer = null;
+    let viewerRoot = null;
+    let sceneLoaded = false;
+    let disposed = false;
+    let cameraTimer = 0;
+
+    function isBenignDisposeError(err) {
+      if (err instanceof Error &&
+          (err.name === "AbortedPromiseError" ||
+           String(err.message || "").toLowerCase().includes("scene disposed"))) {
+        return true;
+      }
+      // DOMException NotFoundError from re-parenting a detached canvas.
+      return (typeof DOMException !== "undefined" &&
+              err instanceof DOMException && err.name === "NotFoundError");
+    }
+
+    function orientCamera(orientation) {
+      if (!viewer || !viewer.camera || !viewer.controls) return;
+      const next = ORIENTATIONS[orientation] || ORIENTATIONS.front;
+      viewButtons.forEach((b) => b.classList.toggle("active", b.dataset.view === orientation));
+      setVec3(viewer.camera.position, scalePosition(next.position, getNavigationMultiplier()));
+      if (viewer.camera.up && viewer.camera.up.set) viewer.camera.up.set(next.up[0], next.up[1], next.up[2]);
+      setVec3(viewer.controls.target, [0, 0, 0]);
+      if (viewer.camera.lookAt) viewer.camera.lookAt(0, 0, 0);
+      if (viewer.camera.updateProjectionMatrix) viewer.camera.updateProjectionMatrix();
+      if (viewer.camera.updateMatrixWorld) viewer.camera.updateMatrixWorld(true);
+      viewer.controls.update();
+    }
+
+    function configureControls() {
+      if (!viewer || !viewer.controls) return;
+      const navMul = getNavigationMultiplier();
+      const c = viewer.controls;
+      c.enabled = true; c.enableRotate = true; c.enablePan = true; c.enableZoom = true;
+      c.rotateSpeed = 0.72;
+      c.zoomSpeed = Math.min(6, Math.max(1.45, 1.6 / navMul));
+      c.panSpeed = 1.25;
+      c.mouseButtons = { LEFT: 0, MIDDLE: 2, RIGHT: 2 };
+      c.autoRotate = false;
+      c.autoRotateSpeed = 0.7;
+      c.minDistance = 0.0001 * navMul;
+      c.maxDistance = 100000 * navMul;
+      c.update();
+    }
+
+    // Faithful teardown: hide + re-parent root to <body> before dispose (the
+    // React original does this to avoid a NotFoundError while three tears the
+    // canvas down), then dispose and remove the root so the WebGL context and
+    // sort worker are released. Guarded against double-invocation.
+    function disposeViewer() {
+      if (disposed) return;
+      disposed = true;
+      sceneLoaded = false;
+      if (cameraTimer) { window.clearTimeout(cameraTimer); cameraTimer = 0; }
+      const v = viewer, root = viewerRoot;
+      viewer = null; viewerRoot = null;
+      if (!v) { if (root && root.remove) root.remove(); return; }
+      try {
+        if (root) {
+          root.style.display = "none";
+          if (root.parentNode !== document.body) document.body.appendChild(root);
+        }
+        const result = v.dispose();
+        if (result && typeof result.then === "function") {
+          result.catch((e) => { if (!isBenignDisposeError(e)) console.error("Splat cleanup failed", e); });
+        }
+      } catch (e) {
+        if (!isBenignDisposeError(e)) console.error("Splat cleanup failed", e);
+      } finally {
+        if (root && root.remove) {
+          // Remove after the current frame so dispose() can finish touching it.
+          window.setTimeout(() => { try { root.remove(); } catch (_) { /* noop */ } }, 0);
+        }
+      }
+    }
+
+    // Expose to the embedding page (viewer.html) so switching away from the
+    // splat tab can tear the context down deterministically.
+    window.__disposeSplatViewer = disposeViewer;
+    window.addEventListener("pagehide", disposeViewer);
+    window.addEventListener("beforeunload", disposeViewer);
+
+    function init() {
+      if (!CONFIG.splatUrl) {
+        setLoading(false);
+        showCenter("This scene has no splat yet — it may still be exporting. "
+                   + "The .ksplat/.ply web derivative will appear here once training completes.", true);
+        return;
+      }
+
+      viewerRoot = document.createElement("div");
+      viewerRoot.className = "splat-library-root";
+      host.appendChild(viewerRoot);
+
+      const navMul = getNavigationMultiplier();
+      setLoading(true);
+      showCenter("Loading splat scene…", false);
+
+      viewer = new GaussianSplats3D.Viewer({
+        rootElement: viewerRoot,
+        cameraUp: ORIENTATIONS.front.up,
+        initialCameraPosition: scalePosition(ORIENTATIONS.front.position, navMul),
+        initialCameraLookAt: [0, 0, 0],
+        sharedMemoryForWorkers: false, // no SharedArrayBuffer -> no COOP/COEP needed
+        gpuAcceleratedSort: false,
+      });
+
+      const fmt = FORMAT_MAP[CONFIG.splatFormat];
+      // Progressive streaming is only supported for .ksplat / .splat; a .ply
+      // must be fully downloaded before parsing, so gate it to avoid a throw.
+      const progressive = CONFIG.splatFormat === "ksplat" || CONFIG.splatFormat === "splat";
+
+      const sceneOpts = {
+        showLoadingUI: false,
+        splatAlphaRemovalThreshold: 5,
+        progressiveLoad: progressive,
+        position: [0, 0, 0],
+        rotation: [1, 0, 0, 0],
+      };
+      if (fmt !== undefined) sceneOpts.format = fmt;
+
+      viewer.addSplatScene(CONFIG.splatUrl, sceneOpts)
+        .then(() => {
+          if (disposed) return;
+          sceneLoaded = true;
+          viewer.start();
+          cameraTimer = window.setTimeout(() => {
+            if (disposed) return;
+            configureControls();
+            orientCamera("front");
+          }, 150);
+          setLoading(false);
+          hideCenter();
+        })
+        .catch((err) => {
+          if (disposed && isBenignDisposeError(err)) return;
+          console.error("Splat load failed", err);
+          if (!disposed) {
+            setLoading(false);
+            showCenter("Failed to load splat — the file may still be exporting or the asset is unavailable.", true);
+          }
+        });
+
+      viewButtons.forEach((btn) => {
+        btn.addEventListener("click", () => { if (sceneLoaded) orientCamera(btn.dataset.view); });
+      });
+    }
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", init);
+    } else {
+      init();
+    }
+  </script>
+</body>
+</html>
