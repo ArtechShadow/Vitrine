@@ -60,6 +60,19 @@ mkdir -p /data/output /data/input
 mkdir -p /opt/hf-cache
 chown -R ubuntu:ubuntu /opt/hf-cache 2>/dev/null || true
 
+# The web terminal (ttyd) is started by supervisord — which runs as root — with
+# user=ubuntu/uid 1000, but supervisord leaves HOME=/root. That made `claude`
+# look for its config + credentials under /root/.claude (unreadable by ubuntu;
+# /root is 0700) and HANG on login. Correct HOME for uid-1000 login shells
+# before anything else runs (this runs first: 00- sorts before 10-).
+cat > /etc/profile.d/00-home.sh <<'PROFILE'
+# Vitrine: fix HOME for the web terminal (supervisord leaves it /root).
+if [ "$(id -u)" = "1000" ] && [ "$HOME" != "/home/ubuntu" ]; then
+    export HOME=/home/ubuntu USER=ubuntu LOGNAME=ubuntu
+fi
+PROFILE
+chmod 0644 /etc/profile.d/00-home.sh
+
 # Web-terminal Claude login helper. The terminal (ttyd) runs `bash --login` as
 # the non-root ubuntu user, so `claude --dangerously-skip-permissions` is
 # allowed and a subscription login (OAuth) overrides the need for an API key.
