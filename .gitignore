@@ -15,6 +15,10 @@ CLAUDE.md
 build/
 build*/
 build*/**
+# ...but the C++ build ignore above is unanchored, so re-include the docs/build/
+# documentation tree it would otherwise swallow (the "Build (Linux)" guide etc.).
+!docs/build/
+!docs/build/**
 cmake-build-debug/
 cmake-build-release/
 output*
