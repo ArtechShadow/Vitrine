@@ -284,6 +284,16 @@ RUN test -f /opt/sam3-repo/sam3/assets/bpe_simple_vocab_16e6.txt.gz && \
     echo "SAM3 BPE vocab OK" || \
     echo "WARNING: SAM3 BPE vocab not found at /opt/sam3-repo/sam3/assets/bpe_simple_vocab_16e6.txt.gz"
 
+# Reconcile numpy/scipy AFTER SAM3. SAM3 pins numpy<2, which leaves the image with
+# numpy 1.26 + a modern scipy whose wheel references np.long (removed in numpy>=1.24)
+# -> `import scipy.spatial` crashes at runtime (breaks select_frames/reconstruct).
+# Upgrading scipy pulls a numpy>=2 wheel; this pairing (numpy 2.x + scipy>=1.15 +
+# matplotlib for render_previews depth colormaps) was validated end-to-end on
+# rawcapdev 2026-07-02 (decode->select->reconstruct->train->render->segment), and
+# SAM3's numpy<2 pin is advisory & verified-tolerant of numpy 2.x here. Proper
+# long-term isolation is the per-tool venv (ADR-022 P2 / [[web]] follow-up).
+RUN pip3 install --break-system-packages -U "scipy>=1.15" matplotlib
+
 # Set SAM3 BPE path environment variable so the segmentor can find it
 ENV SAM3_BPE_PATH="/opt/sam3-repo/sam3/assets/bpe_simple_vocab_16e6.txt.gz"
 
