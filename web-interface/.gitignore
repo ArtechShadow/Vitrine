@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.*
+
+# Large demo splat (261MB) — host separately or fetch at deploy time
+public/splats/*.ply

@@ -1,0 +1,4 @@
+# Override .gitignore for deploys so bundled demo assets in dist/ are uploaded.
+node_modules
+.git
+*.log
