@@ -312,22 +312,47 @@ def _pull_images(job_id: str, images: list, n_videos: int) -> None:
 
     img_dir = INPUT_DIR / f"{job_id}_images"
     img_dir.mkdir(parents=True, exist_ok=True)
+    total = len(images)
     got = 0
-    for f in images:
+    failed = []
+    for i, f in enumerate(images, 1):
         base = os.path.basename(f.path)
         safe = secure_filename(base) or f"{f.id}.{_ext(base) or 'img'}"
         out = img_dir / safe
-        try:
-            res = gdown.download(id=f.id, output=str(out), quiet=True)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("image download failed (%s): %s", f.id, exc)
-            res = None
-        if res and out.exists():
+        # Idempotent: a fully-downloaded file is kept (lets a re-run fill gaps).
+        if out.exists() and out.stat().st_size > 0:
             got += 1
+            continue
+        ok = False
+        # gdown drops files under Google's anonymous rate-limiting; retry with
+        # backoff so all N land instead of a silent partial (e.g. 36/55).
+        for attempt in range(1, 4):
+            try:
+                res = gdown.download(id=f.id, output=str(out), quiet=True)
+                if res and out.exists() and out.stat().st_size > 0:
+                    ok = True
+                    break
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("image download %s attempt %d failed: %s", f.id, attempt, exc)
+            for part in img_dir.glob(safe + "*.part"):
+                try:
+                    part.unlink()
+                except OSError:
+                    pass
+            time.sleep(2.0 * attempt)
+        if ok:
+            got += 1
+        else:
+            failed.append(base)
+        if i % 10 == 0 or i == total:
+            append_log(job_id, f"Downloading images: {got}/{total} pulled"
+                       + (f", {len(failed)} failed" if failed else ""))
 
     if got == 0:
         _fail_job(job_id, "Found images but none could be downloaded (check sharing).")
         return
+    if failed:
+        append_log(job_id, f"WARN: {len(failed)}/{total} image(s) still failed after retries: {failed[:8]}")
 
     files = [p for p in img_dir.iterdir() if p.is_file()]
     size = sum(p.stat().st_size for p in files)
