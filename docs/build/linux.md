@@ -157,6 +157,39 @@ cat > ~/.lichtfeld/plugins/splat_ready/pipeline_config.json << 'EOF'
 EOF
 ```
 
+## Pipeline Runtime Python Dependencies
+
+The containerised image installs all pipeline and web-service Python dependencies in a single system-Python layer (`/usr/bin/python3`). The entries below are the ones that required explicit reasoning; see `Dockerfile.consolidated` for the full install sequence.
+
+### Web service: `zipstream-ng` and `pynvml`
+
+```
+zipstream-ng pynvml
+```
+
+- **`zipstream-ng`** — streaming ZIP generation used by the web service's archive/download endpoint (ArchiveSpace blueprints, commit `25c6ab78`).
+- **`pynvml`** — NVIDIA Management Library bindings used by the web service's `/system_stats` route to report GPU utilisation and VRAM headroom.
+
+Both are installed in the main pip block alongside the rest of the pipeline deps.
+
+### `scipy>=1.15` reconciliation after SAM3
+
+SAM3 declares a `numpy<2` pin. Installing it leaves the image with numpy 1.26. At that version, modern scipy wheels reference `np.long`, which was removed in numpy 1.24 — causing `import scipy.spatial` to crash at runtime and breaking `select_frames` and `reconstruct`.
+
+The fix is a reconciliation step run **after** the SAM3 install:
+
+```dockerfile
+RUN pip3 install --break-system-packages -U "scipy>=1.15" matplotlib
+```
+
+Upgrading scipy pulls a numpy ≥ 2 wheel. The resulting pairing (numpy 2.x + scipy ≥ 1.15) was validated end-to-end on the rawcapdev dataset (decode → select → reconstruct → train → render → segment, 2026-07-02). SAM3's `numpy<2` pin is advisory; SAM3 itself is verified-tolerant of numpy 2.x in this configuration.
+
+> **Long-term fix:** per-tool venv isolation (ADR-022 P2). Until that ships, the reconciliation step at image build time is the stable workaround.
+
+### `matplotlib`
+
+Required by `src/pipeline/stages.py`'s `render_previews` stage for depth-colormap rendering (`matplotlib.cm` colormaps applied to the gsplat depth buffer). Without it the render stage fails at import time even when no depth output is requested.
+
 ## Install CLI Tools
 
 The `scripts/tools/` directory contains CLI wrappers:

@@ -174,10 +174,27 @@ See `research/decisions/adr-023-*.md` for the full contract and security analysi
 
 ## Status
 
-Dreamlab end-to-end is the active reference run:
-- **Objects** — met via TRELLIS.2 `hull_e2e` (chair / vacuum / toolbox).
-- **Room** — capture-limited (motion blur) as a *mesh*; delivered faithfully as a **splat** via the
-  recompiled **NanoGS** UE 5.8 plugin; a **2DGS** surface mesh is the polygonal-asset alternative.
+**E2E validated on real raw capture (rawcapdev, 2026-07-02):** 55 Pixel DNG frames of a
+gallery still-life (brass patina vessel + Heinz ketchup bottle). Decode 55/55 (rawpy,
+camera-WB) → sharpness-gated selection → COLMAP 100% registration (50 frames, 10.4k points)
+→ LichtFeld igs+ 30k-iter training GPU-bound at ~99% utilisation → 4M-Gaussian splat.
+Keeper renders: `docs/renders/rawcapdev-2026-07-02/`.
+
+- **Ingest + SfM** — fully operational; camera white balance applied on decode; COLMAP
+  undistortion capped at `max_image_size=2000` so training images are sized correctly and
+  the GPU is not starved by per-load CPU downscaling.
+- **3DGS training** — LichtFeld igs+ runs GPU-bound (~15 min, 30k iters) with the v0.5.3
+  binary baked into the image.
+- **Web control surface** — loopback-only (`127.0.0.1:7860`), reached via
+  `ssh -N -L 7860:localhost:7860`; includes file browser with previews, per-run zip download,
+  and an embedded 3D splat viewer (vendored `@mkkellogg/gaussian-splats-3d`).
+- **Object meshing** — per-object PLYs are now routed to TRELLIS.2 `hull_e2e` (ADR-015).
+  SAM3 concept segmentation is running but currently returns coarse bounding boxes rather
+  than per-object silhouettes; silhouette-quality masks are a known follow-up before the
+  object path reaches production quality. The working object path in the interim is a
+  manually cropped SAM image fed directly into TRELLIS.2 via ComfyUI.
+- **Prior Dreamlab reference** — objects met via TRELLIS.2 (chair / vacuum / toolbox);
+  room capture-limited as a mesh, delivered faithfully as a splat via NanoGS (UE 5.8).
 - **Capture quality is the dominant bottleneck** — see `docs/capture-methodology.md`.
 
 Live status: [`docs/engineering-log.md`](docs/engineering-log.md).
