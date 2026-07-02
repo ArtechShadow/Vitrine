@@ -87,8 +87,10 @@ services:
       - ${MODELS_STAGING_DIR:-./data/comfyui/models}:/models-staging:ro
       # Persistent output data (web UI writes to /data/output)
       - ./output:/data/output
-      # Host-compiled LichtFeld binary (bind-mount from host build)
-      - ${LICHTFELD_BUILD_DIR:-./build}:/opt/gaussian-toolkit/build:ro
+      # NOTE (ADR-022): LichtFeld-Studio v0.5.3 is now BAKED INTO the image
+      # (lichtfeld-builder stage → /opt/gaussian-toolkit/build). The former
+      # `./build:/opt/gaussian-toolkit/build:ro` bind-mount is removed — an empty
+      # host build/ used to shadow the binary and silently drop training to gsplat.
       # Host CUDA libs (if container CUDA version differs from host)
       - /opt/cuda/lib64:/opt/host-cuda-libs:ro
       # Persistent model cache (survives rebuilds)

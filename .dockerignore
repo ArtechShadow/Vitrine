@@ -14,5 +14,11 @@ unreal/engine/
 # or are local build artifacts, never needed in the image context.
 build/
 build*/
+# Nested build artifacts under the vendored submodule (never needed; the
+# lichtfeld-builder stage builds fresh from the COPY'd source).
+vendor/lichtfeld-studio/build/
+vendor/lichtfeld-studio/build*/
+# Dev-only raw test captures (~2.3G of DNGs) — staged via the web UI, not baked.
+rawsForDev/
 onboarding/target/
 external/libtorch/
