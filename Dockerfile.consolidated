@@ -162,9 +162,11 @@ RUN git clone https://github.com/comfyanonymous/ComfyUI.git /opt/comfyui && \
 RUN /usr/bin/python3.12 -m pip install --break-system-packages \
         -r /opt/comfyui/requirements.txt
 
-# Optional accelerators for the raw-image decode stage (src/pipeline/image_decoder.py).
-# Not required for correctness — ImageMagick (libheif + dcraw delegates) already
+# gdown: REQUIRED for the web Google-Drive ingest (src/web/app.py /ingest/url).
+# Optional accelerators for the raw-image decode stage (src/pipeline/image_decoder.py):
+# not required for correctness — ImageMagick (libheif + dcraw delegates) already
 # decodes RAW/HEIC — but rawpy/pillow-heif are faster and higher quality when present.
+RUN /usr/bin/python3.12 -m pip install --break-system-packages gdown
 RUN /usr/bin/python3.12 -m pip install --break-system-packages \
         rawpy pillow-heif || echo "rawpy/pillow-heif optional install skipped — ImageMagick fallback used"
 

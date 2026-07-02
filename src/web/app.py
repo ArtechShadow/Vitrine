@@ -277,14 +277,14 @@ def _fail_job(job_id: str, msg: str) -> None:
 
 def _folder_ingest_worker(job_id: str, folder_url: str) -> None:
     """List a public Drive folder, then prefer images, else fall back to video."""
-    import gdown  # 6.x: download_folder(skip_download=True) lists without downloading
-
     try:
+        import gdown  # 6.x: download_folder(skip_download=True) lists without downloading
         listing = gdown.download_folder(
             url=folder_url, skip_download=True, quiet=True, use_cookies=False
         )
-    except Exception as exc:  # noqa: BLE001
-        _fail_job(job_id, f"Could not read Drive folder (is it 'Anyone with the link'?): {exc}")
+    except Exception as exc:  # noqa: BLE001 - import or listing failure must fail the job, not the thread
+        _fail_job(job_id, f"Could not read Drive folder (gdown missing, or folder not "
+                          f"'Anyone with the link'): {exc}")
         return
     if not listing:
         _fail_job(job_id, "Drive folder is empty or not publicly shared.")
@@ -387,13 +387,12 @@ def _pull_video(job_id: str, file_id: str, hint_name: str) -> None:
 
 def _file_ingest_worker(job_id: str, file_id: str) -> None:
     """Download a single Drive file; classify as image vs video, then queue."""
-    import gdown
-
     dl_dir = INPUT_DIR / f"{job_id}_dl"
     dl_dir.mkdir(parents=True, exist_ok=True)
     try:
+        import gdown
         out = gdown.download(id=file_id, output=str(dl_dir) + os.sep, quiet=True)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 - import or download failure must fail the job, not the thread
         _fail_job(job_id, f"Download failed: {exc}")
         return
     if not out or not os.path.exists(out):
