@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vitrine · mesh · {{ glb_name }}</title>
+  <!-- Vendored, offline (no CDN) — served by Flask static under loopback + SSH tunnel -->
+  <script type="module" src="/static/vendor/model-viewer/model-viewer.min.js"></script>
+  <style>
+    :root { color-scheme: dark; }
+    html, body { margin: 0; height: 100%; background: #16161a; font-family: ui-sans-serif, system-ui, sans-serif; color: #d8d8dd; }
+    model-viewer { width: 100vw; height: 100vh; --poster-color: #16161a; background: radial-gradient(circle at 50% 40%, #22222a 0%, #131317 70%); }
+    .hud { position: fixed; top: 14px; left: 18px; font-size: 13px; letter-spacing: .02em; opacity: .8; pointer-events: none; }
+    .hud b { color: #f0f0f4; font-weight: 600; }
+    .hud .sub { opacity: .6; font-size: 11px; }
+    .hint { position: fixed; bottom: 14px; left: 18px; font-size: 11px; opacity: .5; }
+    a { color: #9fb4ff; }
+  </style>
+</head>
+<body>
+  <div class="hud">
+    <b>VITRINE</b> · mesh viewer<br />
+    <span class="sub">run <b>{{ scene_id }}</b> · {{ glb_name }}</span>
+  </div>
+  <model-viewer
+    src="{{ glb_url }}"
+    alt="Reconstructed object mesh for {{ scene_id }}"
+    camera-controls
+    auto-rotate
+    auto-rotate-delay="0"
+    rotation-per-second="18deg"
+    interaction-prompt="none"
+    shadow-intensity="1.0"
+    shadow-softness="0.8"
+    exposure="1.05"
+    environment-image="neutral"
+    tone-mapping="aces"
+    camera-orbit="35deg 75deg auto"
+    min-camera-orbit="auto auto auto"
+    max-camera-orbit="auto auto auto">
+  </model-viewer>
+  <div class="hint">drag to orbit · scroll to zoom · TRELLIS.2 image→3D reconstruction</div>
+</body>
+</html>

@@ -37,7 +37,10 @@ vcpkg_*/**
 # ---------------------------------------------------------------------------
 # Python
 # ---------------------------------------------------------------------------
-*.py
+# NOTE: do NOT add `*.py` here — it silently ignores ALL Python source (this
+# previously dropped src/web/{scenes,files,zip,splat}_api.py from the repo).
+# Ignore only byte-compiled artifacts + virtualenvs; vendored/scratch Python is
+# covered by the data/, vendor/, output/, build/ rules elsewhere.
 __pycache__/
 *.pyc
 .venv/
