@@ -30,12 +30,17 @@ These supersede convenience shortcuts elsewhere in this file.
    **Never modify files inside `vendor/lichtfeld-studio/`.** Update the tool by
    bumping the submodule pin to a new tag.
 2. **Always run clean SOTA.** Use the newest stable models/tools, never a stale
-   default. SOTA weights are already staged — do NOT re-download. They live in
-   the single **unified models tree** `data/comfyui/models/` (ComfyUI's native
-   store, ~216 GB), bind-mounted read-only into this container at
-   `/models-staging` and as ComfyUI's native `/comfyui/models`. If
-   `/models-staging` is empty, fix the bind mount (or set `MODELS_STAGING_DIR`)
-   — never re-download or copy the tree.
+   default. SOTA weights are **pre-staged** in the single **unified models tree**
+   `data/comfyui/models/` (ComfyUI's native store, ~216 GB), bind-mounted into
+   this container at `/models-staging` and as ComfyUI's native `/comfyui/models`.
+   **Prefer the staged weights** and don't redundantly re-download what is already
+   present — but this is a preference, **not a prohibition**. If a model you need
+   is **not staged** — a fresh setup without the pre-staged tree, or a new
+   checkpoint you have version-checked — **download it from HuggingFace** (use
+   `HF_TOKEN` for gated repos) into the models tree / HF cache, then pin the exact
+   revision. If `/models-staging` is empty, check the bind mount /
+   `MODELS_STAGING_DIR` first; when there is no staged copy to point at,
+   downloading the missing weights is the correct action, not an error.
 3. **Always version-check before use, then pin.** For every model/tool, verify
    the current latest (MCP catalog, ComfyUI `/object_info`, HF, upstream repo),
    update if behind, then pin the exact tag/commit/checkpoint. No HEAD clones,
