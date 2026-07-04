@@ -26,7 +26,8 @@ Gaussian Toolkit integrates multiple components into a unified 3D Gaussian Splat
 │  COLMAP SfM → LichtFeld 3DGS → SAM3 Segmentation     │
 │  → TRELLIS.2 hull / CoMe env mesh → USD Export        │
 │                                                        │
-│  Web UI :7860 | MCP :45677 | ttyd :7681              │
+│  Web UI :7860 (file browser, splat viewer,            │
+│    zip, ingest) | MCP :45677 | ttyd :7681            │
 │  VNC :5901 (host :5902)                               │
 │  Claude Code (agentic orchestrator)                    │
 └────────────────┬──────────────────────────────────────┘
@@ -72,7 +73,7 @@ Gaussian Toolkit integrates multiple components into a unified 3D Gaussian Splat
 | Open3D | 0.18+ | MIT | TSDF fusion, mesh processing (env-mesh floor fallback) |
 | OpenUSD | 25.02+ | Modified Apache 2.0 | USD scene composition |
 | METIS | 5.2.1 | Apache-2.0 | Graph partitioning (COLMAP dependency) |
-| Flask | 3.x | BSD | Web upload interface on :7860 |
+| Flask | 3.x | BSD | Operator UI: ingest (video/stills/zip/Drive), run browser + file tree, 3D splat viewer (gaussian-splats-3d, bundled), streamed zip download, disk/health/system stats. Loopback-only per ADR-022; ADR-023 records the ArchiveSpace UX consolidation. |
 | vcpkg | latest | MIT | C++ dependency management (91 packages) |
 
 ## Data Flow

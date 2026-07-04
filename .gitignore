@@ -12,9 +12,11 @@ lichtfeld-studio.aps
 # Build artifacts
 # ---------------------------------------------------------------------------
 CLAUDE.md
-build/
-build*/
-build*/**
+# Anchored to repo root so the C++ build dirs (build/, build-lf/, …) are ignored
+# WITHOUT swallowing nested paths like docs/build/ (which held the Linux build guide).
+/build/
+/build*/
+/build*/**
 cmake-build-debug/
 cmake-build-release/
 output*
@@ -37,7 +39,10 @@ vcpkg_*/**
 # ---------------------------------------------------------------------------
 # Python
 # ---------------------------------------------------------------------------
-*.py
+# NOTE: do NOT add `*.py` here — it silently ignores ALL Python source (this
+# previously dropped src/web/{scenes,files,zip,splat}_api.py from the repo).
+# Ignore only byte-compiled artifacts + virtualenvs; vendored/scratch Python is
+# covered by the data/, vendor/, output/, build/ rules elsewhere.
 __pycache__/
 *.pyc
 .venv/

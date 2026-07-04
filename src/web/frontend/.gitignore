@@ -1,0 +1,11 @@
+# Vitrine web frontend — build artifacts and local deps.
+# The compiled dist/ is produced by the node:20 builder stage in
+# Dockerfile.consolidated and baked into src/web/static/spa/; it is NOT
+# committed here. package-lock.json IS committed (pinned, offline-signable).
+node_modules/
+dist/
+.vite/
+*.local
+.env
+.env.*
+!.env.example

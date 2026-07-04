@@ -11,7 +11,7 @@ Vitrine runs as a small set of Docker containers sharing volumes for output data
 | Base image | `nvidia/cuda:12.8.1-devel-ubuntu24.04` |
 | Python | 3.12 |
 | GPU assignment | Device 0 (RTX 6000 Ada, 48 GB) |
-| Ports | 7860 (web UI), 7681 (ttyd terminal), 45677 (LichtFeld MCP), 8088 (onboarding wizard), 5901→5902 (VNC — host 5902, in-container 5901) |
+| Ports | 7860 (web UI — file browser, splat viewer, per-run zip; loopback-only 127.0.0.1, SSH tunnel — ADR-022/ADR-023; `LFS_WEB_HOST` env opt-in for docker-net access), 7681 (ttyd terminal), 45677 (LichtFeld MCP), 8088 (onboarding wizard), 5901→5902 (VNC — host 5902, in-container 5901) |
 | Process manager | supervisord |
 | Memory limit | 200 GB |
 | Shared memory | 64 GB |
@@ -165,7 +165,7 @@ The pipeline is modelled as seven bounded contexts (see `research/ddd/bounded-co
 | Segmentation | `sam2_segmentor.py`, `sam3_segmentor.py`, `mask_projector.py` | `ObjectMask` arrays |
 | MeshExtraction | `mesh_extractor.py`, `milo_extractor.py`, `come_extractor.py`, `gaussianwrapping_extractor.py` | `MeshAsset` (GLB) |
 | SceneAssembly | `blender_assembler.py`, `usd_assembler.py` | `UsdScene` |
-| Delivery | `splat_optimizer.py`, `src/web/` | `.ksplat` + download ZIP |
+| Delivery | `splat_optimizer.py`, `src/web/` (Flask blueprints: `scenes_api`, `files_api`, `zip_api`, `splat_api`) | `.ksplat` + file browser (`/api/runs/<id>/tree\|file`) + 3D splat viewer (`/api/scenes/<id>/splat/<filename>` via bundled `@mkkellogg/gaussian-splats-3d`) + per-run streamed zip (`/api/runs/<id>/zip`, `zipstream-ng`) + system stats (`/api/system/stats`) |
 
 Orchestration (`stages.py`, `orchestrator.py`) is a published language that crosses all contexts via `StageResult`.
 
@@ -174,6 +174,8 @@ SceneAssembly writes native USD with `v2g:*` lineage metadata (implemented): `sr
 ## Claude Code as Orchestrator
 
 Claude Code runs inside the main container (accessible via ttyd on port 7681). It drives the pipeline by:
+
+> **Web endpoint security (ADR-022):** all Flask endpoints on port 7860 bind `127.0.0.1` (loopback-only) by default and are reached externally only via an SSH tunnel (`ssh -N -L 7860:localhost:7860`). Docker-net access (for container-to-container calls on `v2g-net` / `visionclaw_network`) requires explicitly setting `LFS_WEB_HOST=0.0.0.0` in the container environment — this must never be the default in the image or compose file. The single-mega-image security boundary (ADR-022/ADR-023) is not weakened by any of the new ArchiveSpace web endpoints.
 
 1. Receiving a job from the Flask web UI
 2. Calling pipeline stages in sequence via Python imports

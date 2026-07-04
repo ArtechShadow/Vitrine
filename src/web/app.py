@@ -997,6 +997,11 @@ def get_previews(job_id: str) -> tuple[Response, int]:
                 size_kb = 0
             previews.append({
                 "path": str(rel),
+                # ``relative_path`` is an explicit alias of ``path`` consumed by
+                # viewer.html (it builds /api/job/<id>/file/<relative_path>). Kept
+                # as a distinct key so the SPA and the legacy viewer can share one
+                # payload shape without either guessing the field name.
+                "relative_path": str(rel),
                 "url": f"/api/job/{safe_id}/file/{rel}",
                 "stage": stage,
                 "size_kb": size_kb,
@@ -1021,6 +1026,127 @@ def serve_job_file(job_id: str, filepath: str) -> Response:
         abort(404)
 
     return send_from_directory(str(job_dir), filepath)
+
+
+# ---------------------------------------------------------------------------
+# Single-page app (ArchiveSpace SPA) hosting
+#
+# The Vitrine-owned React SPA (src/web/frontend) is compiled at IMAGE BUILD time
+# by a gated `node:20` builder stage in Dockerfile.consolidated and baked into
+# static/spa/ — no Node binary ever lands in the runtime image (single-mega-image
+# invariant, ADR-022). Flask serves that baked dist for the SPA's client-side
+# routes (/library, /create, /scenes/<id>, /pipeline, /viewer) via ONE low-weight
+# catch-all that:
+#   (a) never shadows /api/*, /stream, /download or /static assets — Werkzeug
+#       matches those more-specific rules first, and the reserved-prefix guard
+#       below keeps unknown /api/* paths returning JSON 404 rather than the shell;
+#   (b) serves real built files (JS/CSS/img) directly when they exist;
+#   (c) falls back to the SPA index for deep links (client-side routing); and
+#   (d) falls through to the legacy Jinja UI when no dist is baked in, so every
+#       route keeps working with BUILD_SPA=0.
+# The legacy `/` route is intentionally left untouched (it still renders
+# index.html) — the SPA is reached via its sub-routes.
+# ---------------------------------------------------------------------------
+
+SPA_DIST_DIR = Path(__file__).resolve().parent / "static" / "spa"
+
+# First path segments that must NEVER resolve to the SPA shell. Unknown paths
+# under these fall through to the normal JSON 404 instead of a 200 HTML shell.
+_SPA_RESERVED_PREFIXES = {
+    "api", "stream", "download", "status", "static", "health", "upload", "ingest",
+}
+
+
+def _spa_available() -> bool:
+    """True when a compiled SPA (baked by the gated Docker stage) is present."""
+    return (SPA_DIST_DIR / "index.html").is_file()
+
+
+@app.route("/<path:path>", methods=["GET"])
+def spa_catch_all(path: str) -> "Response | str":
+    """Serve the baked SPA (built assets + index fallback) or the legacy UI.
+
+    This is the lowest-priority rule in the map: it only runs when no exact or
+    more-specific route (every /api, job, stream, download, viewer/<id>, mesh,
+    preview, and the built-in /static rule) matched. It never overrides them.
+    """
+    first = path.split("/", 1)[0]
+    if first in _SPA_RESERVED_PREFIXES:
+        # Reserved API/asset surface — let the JSON 404 handler answer.
+        abort(404)
+
+    if _spa_available():
+        # Serve a real built asset (js/css/img/favicon/…) when one exists,
+        # guarding against path traversal; otherwise hand back the SPA shell so
+        # react-router can resolve the client-side route (deep link).
+        candidate = (SPA_DIST_DIR / path).resolve()
+        try:
+            candidate.relative_to(SPA_DIST_DIR.resolve())
+        except ValueError:
+            abort(404)
+        if candidate.is_file():
+            return send_from_directory(str(SPA_DIST_DIR), path)
+        return send_from_directory(str(SPA_DIST_DIR), "index.html")
+
+    # No baked SPA (BUILD_SPA=0): fall through to the legacy Jinja single-page UI.
+    return render_template("index.html")
+
+
+# ---------------------------------------------------------------------------
+# Additive API blueprints (ArchiveSpace consolidation)
+#
+# The richer scene/library/QA UX harvested from community PR #6 is served by four
+# small, self-contained blueprints that live alongside this module under
+# Flat ``web.*`` modules (imported as web.scenes_api, web.files_api, …):
+#   scenes_api — /api/scenes/*                     (scene CRUD, image/zip upload, progress)
+#   files_api  — /api/runs/<id>/{tree,file}, /api/scenes/<id>/{frames,derivatives}  (file browser + previews)
+#   zip_api    — per-run streamed zip downloads
+#   splat_api  — splat manifest + .ksplat/.ply/.splat serving for the 3D viewer
+# They are strictly ADDITIVE: they never replace the job-centric routes that
+# index.html, viewer.html and the orchestrator callbacks depend on. Registration
+# is resilient — a blueprint that is absent or fails to import (e.g. mid-rollout)
+# is logged and skipped so the legacy surface always boots. Each module exposes
+# its Blueprint as a module-level ``bp`` (with a same-named attribute accepted as
+# a fallback).
+# ---------------------------------------------------------------------------
+
+_API_BLUEPRINT_MODULES = ("scenes_api", "files_api", "zip_api", "splat_api")
+
+
+def _register_api_blueprints(flask_app: Flask) -> None:
+    """Import and register the additive ArchiveSpace API blueprints.
+
+    Missing or broken blueprints are logged and skipped rather than taking down
+    the legacy job-centric surface the pipeline depends on.
+    """
+    import importlib
+
+    from flask import Blueprint
+
+    for name in _API_BLUEPRINT_MODULES:
+        try:
+            module = importlib.import_module(f"web.{name}")
+        except Exception as exc:  # noqa: BLE001 - a missing/broken bp must not break boot
+            logger.warning("API blueprint %s not registered (import failed): %s", name, exc)
+            continue
+
+        blueprint = getattr(module, "bp", None)
+        if not isinstance(blueprint, Blueprint):
+            blueprint = getattr(module, name, None)
+        if not isinstance(blueprint, Blueprint):
+            logger.warning("API blueprint %s exposes no Flask Blueprint; skipped", name)
+            continue
+
+        try:
+            flask_app.register_blueprint(blueprint)
+            logger.info("Registered API blueprint: %s", name)
+        except Exception as exc:  # noqa: BLE001 - double-registration / name clash guard
+            logger.warning("API blueprint %s registration failed: %s", name, exc)
+
+
+# Register at import time so both the direct-run (`python app.py`) and any WSGI
+# import (`web.app:app`) paths pick the blueprints up before the first request.
+_register_api_blueprints(app)
 
 
 # ---------------------------------------------------------------------------
@@ -1062,8 +1188,25 @@ def create_app() -> Flask:
 if __name__ == "__main__":
     application = create_app()
     port = int(os.environ.get("LFS_WEB_PORT", "7860"))
+    # ADR-022 D3: bind loopback-only BY DEFAULT. The service is reached
+    # externally only via `ssh -N -L 7860:localhost:7860`; it must never be
+    # exposed to the LAN. 0.0.0.0 is available ONLY through an explicit
+    # LFS_WEB_HOST opt-in, documented for the current v2g-net / visionclaw_network
+    # container-to-container topology (so sibling containers and the agentbox can
+    # reach gaussian-toolkit:7860). Even under that opt-in, host publishing stays
+    # pinned to 127.0.0.1:7860 in docker-compose.consolidated.yml, so the LAN
+    # boundary is preserved regardless of the in-container bind address.
+    host = os.environ.get("LFS_WEB_HOST", "127.0.0.1")
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        logger.warning(
+            "LFS_WEB_HOST=%s binds beyond loopback (ADR-022 D3 opt-in). Ensure the "
+            "host port stays published on 127.0.0.1 only; external reach must remain "
+            "via `ssh -N -L %d:localhost:%d`.",
+            host, port, port,
+        )
+    logger.info("Vitrine web service binding %s:%d (loopback-default per ADR-022)", host, port)
     application.run(
-        host="0.0.0.0",
+        host=host,
         port=port,
         debug=os.environ.get("LFS_DEBUG", "").lower() in ("1", "true"),
         threaded=True,

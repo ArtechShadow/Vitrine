@@ -1,0 +1,240 @@
+\documentclass[a4paper,11pt]{article}
+\input{vitrine_preamble.tex}
+\renewcommand{\VitrineDocKicker}{Digital IT briefing}
+
+\begin{document}
+
+\vitrinetitle{Vitrine}%
+{Capture-adaptive photo/video to structured, textured, game-ready 3D scenes for cultural-heritage digitisation}%
+{Briefing for University of Salford Digital IT \textbullet\ Deployment, security posture and platform justification \textbullet\ 2026-07-02}
+
+\begin{keyfinding}[Executive summary]
+Vitrine turns ordinary phone photos and video into structured, textured, game-ready 3D
+scenes for Unreal Engine 5.8 and Blender, for on-premises cultural-heritage digitisation.
+It ships as a \textbf{single hardened Docker image} with \textbf{no SaaS dependency}: the web
+UI binds \code{127.0.0.1:7860} and is reached only over an SSH tunnel, so captures, splats
+and meshes never leave institution hardware. An internal agent controller runs
+\emph{risk-managed} continuous improvement (propose $\to$ adversarially verify $\to$ commit,
+with a human owning rebuilds). End-to-end validated 2026-07-02 on 55 hand-held phone frames.
+Honest maturity: pre-product, single-site R\&D; capture quality is the dominant quality
+bottleneck; per-object segmentation is a known follow-up.
+\end{keyfinding}
+
+\section{What Vitrine is and what it produces}
+
+Vitrine is a capture-adaptive pipeline: it diagnoses each input, routes it through
+photogrammetry, 3D Gaussian Splatting (3DGS) and mesh-extraction stages as the capture
+quality allows, and delivers a scene as \emph{standard game assets} (baked-PBR FBX/GLB, not a
+raw splat or point cloud) with explicit \code{v2g:*} provenance metadata. It vendors the
+native C++/CUDA 3DGS trainer LichtFeld Studio at a pinned tag (v0.5.3, never forked). The
+run below is the validated end-to-end path of 2026-07-02: a brass vessel and ketchup-bottle
+still life shot on a phone.
+
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}L{3.3cm} L{5.0cm} X@{}}
+\toprule
+\textbf{Stage} & \textbf{Tool / method} & \textbf{Validated output (2026-07-02)} \\
+\midrule
+Ingest / decode      & DNG/HEIC decode, camera white balance        & 55/55 hand-held phone frames decoded \\
+SfM registration     & COLMAP (ALIKED + LightGlue)                   & 100\% frame registration, 10.4k points \\
+3DGS training        & LichtFeld Studio v0.5.3 \code{igs+}, 30k iter & GPU-bound $\sim$15 min, 4M-Gaussian room splat \\
+Object segmentation  & SAM silhouette crop                           & per-object crop (follow-up area) \\
+Object reconstruction& TRELLIS.2 image $\to$ 3D                       & 4096px PBR-textured GLB, 274k verts \\
+Scene assembly       & Blender exhibit scene                         & staged scene carrying \code{v2g:*} lineage \\
+Web delivery         & \code{<model-viewer>}                          & in-browser preview \\
+Engine delivery (opt)& FBX game asset, UE 5.8 (Nanite)               & textured mesh import, no splat runtime \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Delivering meshes rather than splats is deliberate: 3DGS in a game engine is a renderer, not
+an asset, and carries documented limits (no Lumen GI/reflection interaction, view-dependent
+appearance baked in, $\sim$180\,MB per 1M splats vs 5--20\,MB for a textured mesh, no standard
+PBR or collision) [13]. Vitrine treats the splat as an intermediate and ships a mesh.
+
+\section{The single hardened mono-image and its attack surface}
+
+For IT signoff the relevant fact is the small, auditable surface. Everything runs inside one
+image; there are no ambient external calls, no per-asset cloud storage, and nothing published
+to the LAN by default. The design is recorded in ADR-022 (secure single-image) and ADR-023
+(web consolidation).
+
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}L{4.1cm} X@{}}
+\toprule
+\textbf{Concern} & \textbf{Vitrine posture} \\
+\midrule
+Deployment unit      & One auditable Docker mono-image; no service sprawl to inventory or patch piecemeal. \\
+Network exposure     & Web UI binds \code{127.0.0.1:7860}; host publish pinned to \code{127.0.0.1}. The LAN never sees the service. \\
+Remote access        & Operator tunnels in: \code{ssh -N -L 7860:localhost:7860}. No listener on a routable interface. \\
+Third-party tooling  & Least-privilege internal venv + OS-user isolation; bundled model/tool code cannot read host or pipeline secrets. \\
+Data egress          & None by design. Captures, splats and meshes stay on institution hardware; air-gappable. \\
+Provenance / audit   & Every artifact carries \code{v2g:*} lineage; runs are reproducible from pinned SOTA versions. \\
+Design records       & ADR-022 (secure single-image), ADR-023 (web consolidation). \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{technote}[Why this is IT-signable and air-gappable]
+The default posture is \textbf{deny-by-network}: the only way to reach the UI is an
+authenticated SSH session that the institution already governs, then a local-forward to
+loopback. No inbound port is open to the LAN or internet, so the pipeline can run fully
+air-gapped once model weights are staged on disk. Because it is one image with an internal
+least-privilege venv and OS-user split, the audit question is bounded: one image to scan, one
+loopback binding to confirm, one provenance scheme to inspect. This directly answers the
+data-sovereignty and CARE/FAIR requirements that heritage collections impose (\S5).
+\end{technote}
+
+\section{Internal agentic resilience: risk-managed continuous improvement}
+
+Vitrine embeds an agent controller that diagnoses each capture, selects the pipeline, drives
+the tools, runs in-flight evaluations, and recovers from failure (restart-resilient model
+lifecycles, phased VRAM allocation). Improvement is not ad-hoc: the controller fans out
+sub-agent ``meshes'' that \textbf{propose} changes and \textbf{adversarially verify} them
+before anything is committed --- \textbf{propose $\to$ verify $\to$ commit}, with a human owning
+the rebuild. Two concrete cases:
+
+\begin{itemize}
+\item \textbf{QE fleet caught a shipping bug pre-commit.} A quality-engineering sub-agent
+  fleet found a dead API-blueprint wiring bug during adversarial verification and blocked it
+  before it reached a build.
+\item \textbf{Self-healing container entrypoint.} When a pinned wheel's ABI drifted under a
+  Torch upgrade, the entrypoint rebuilt the affected CUDA extension from source rather than
+  failing the run, keeping the image reproducible.
+\end{itemize}
+
+This is automated but bounded: agents propose and verify; a human authorises the rebuild that
+ships. It is a maintenance and reliability property, not autonomy over production.
+
+\begin{riskbox}[Residual risks and mitigations]
+\textbf{Risk:} agentic self-modification could regress the pipeline. \textbf{Mitigation:} no
+change ships without adversarial verification and a human-owned rebuild; nothing auto-deploys.
+\quad\textbf{Risk:} dependency/ABI drift breaks a run. \textbf{Mitigation:} exact-pinned SOTA
+versions plus self-healing rebuild-from-source in the entrypoint. \quad\textbf{Risk:} output
+quality. \textbf{Mitigation (and honest limit):} quality is capture-limited, not
+pipeline-limited --- the dominant lever is capture, and per-object silhouette segmentation is a
+known, tracked follow-up. Vitrine is single-site R\&D, not a shipping product.
+\end{riskbox}
+
+\section{Position versus competitors}
+
+No mainstream tool ships the whole capture-to-game-asset path as one sovereign, offline unit.
+Cloud tools are structurally disqualified for sovereign heritage data; strong desktop tools
+are single apps, not an integrated pipeline; the closest academic peer stops at splats.
+
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}L{3.0cm} C{1.9cm} C{1.9cm} C{1.9cm} C{2.1cm} C{1.6cm}@{}}
+\toprule
+\textbf{Tool / service} & \textbf{On-prem?} & \textbf{Trains 3DGS?} & \textbf{Per-object?} & \textbf{UE game asset?} & \textbf{Sovereign?} \\
+\midrule
+\textbf{Vitrine}          & Yes         & Yes         & Yes (follow-up) & Yes (FBX/Nanite) & Yes \\
+Luma AI                   & No (cloud)  & Yes         & No          & Splat only     & No \\
+Polycam                   & No (cloud)  & Yes         & No          & Mesh, no scene & No \\
+KIRI Engine               & No (cloud)  & Yes         & Object mesh & No             & No \\
+Scaniverse (Niantic)      & On-device   & Yes         & No          & No             & Partial \\
+RealityScan (Epic)        & Yes         & No (SfM)    & No          & Mesh, manual   & Yes \\
+Agisoft Metashape         & Yes         & No (export) & No          & Mesh, manual   & Yes \\
+Postshot (Jawset)         & Yes         & Yes         & No          & Splat only     & Yes \\
+Gaussian Heritage [11]    & Yes (Docker)& Yes         & Yes         & Splat only     & Yes \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The moat is the \emph{combination}, not any single axis: sovereign on-prem delivery, 3DGS
+training, per-object scene structure, and UE 5.8 game-asset output in one deployable image.
+The nearest neighbours are RealityScan (on-prem + UE, but no 3DGS training, no automated
+object scene) [12] and Gaussian Heritage (structuring + Docker, but research-grade splats, no
+game-asset delivery) [11]; no competitor spans both. Where rivals are genuinely ahead ---
+stated plainly --- is capture UX and ergonomics, out-of-box per-object mesh quality, 3DGS
+trainer polish, and scale/track record. Vitrine's object quality is still capture-limited and
+iterating.
+
+\section{Business case: why on-prem sovereign digitisation}
+
+Two decay vectors make structured, open, re-renderable 3D surrogates a preservation asset
+rather than a novelty.
+
+\textbf{Physical decay.} UNESCO/WRI (July 2025) find \textbf{73\% of 1,172 non-marine World
+Heritage sites are highly exposed to water-related hazards, and 21\% face multiple overlapping
+risks} [1]. Catastrophic single-event losses recur: the National Museum of Brazil fire (2018)
+destroyed most of a $\sim$20-million-item collection, recoverable only through prior imagery
+[3]; after Notre-Dame (2019), Andrew Tallon's 2010 laser scan ($>$1 billion points,
+$\sim$5\,mm) became the restoration blueprint [2]. The lesson is consistent: capture beats
+reconstruction, and the window in which an object still exists and has not yet been captured
+is closing.
+
+\textbf{Digital bitrot.} Digitising is necessary but not sufficient. Pew (2024) measured that
+\textbf{38\% of web pages that existed in 2013 were gone by 2023} [4]; the Digital Preservation
+Coalition's 2023 ``Bit List'' reached \textbf{87 endangered digital categories} and reclassified
+unpublished research data as \emph{Critically Endangered} [5]; storage media are not archival
+(hard drives 3--5 years, LTO tape 10--20 in practice) so only redundancy plus active migration
+survives [6]. Open, standardised formats age far better --- glTF is an ISO/IEC 12113:2022
+standard and OpenUSD is vendor-neutral [10]. Vitrine emits a structured, format-migratable
+asset stack (mesh + baked textures + \code{v2g:*} lineage) that a future institution can still
+open; a defunct SaaS account is not.
+
+\textbf{Why sovereignty, not cloud.} Roughly \textbf{5--10\% of collections are on display};
+the rest sit in storage (90--99\% by museum type) [7], so any serious programme is
+high-volume, and recurring per-asset cloud fees scale badly against it. Sacred,
+rights-encumbered or community-owned material cannot be governed under a third party's terms:
+CARE principles and Indigenous-data-sovereignty practice require the originating community to
+control the infrastructure and access, not merely receive a file on someone else's server [9].
+FAIR/paradata scholarship treats the digitisation \emph{process} as a research object needing
+documented provenance --- which Vitrine's pinned, containerised, \code{v2g:*}-tagged runs
+provide. Demand is documented: the University of Glasgow's \pounds5.6m ``Museums in the
+Metaverse'' surveyed 2,000+ people and found \textbf{79\% interested in digital tools to
+explore collections not on display} [8].
+
+\section{Funding horizon}
+
+Vitrine's four-way hook --- heritage digitisation, immersive/games-engine delivery (UE 5.8,
+Nanite), sovereign/on-prem AI, and real games-asset workflow --- maps onto a realistic ladder
+of live opportunities. UK entities are associated to Horizon Europe for 2024--2027 and can bid
+Cluster 2 directly.
+
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}L{5.4cm} L{3.0cm} X@{}}
+\toprule
+\textbf{Programme / call} & \textbf{Funder} & \textbf{Fit / positioning} \\
+\midrule
+HORIZON-CL2-2027-01-HERITAGE-08 (intangible CH; $\sim$Sep 2027) & Horizon Europe CL2 [14] & Primary anchor: Vitrine is the technical pipeline WP inside a culture-led consortium. \\
+HORIZON-CL2-2026-01-HERITAGE-03 (AI in CCSI practice; $\sim$Sep 2026) & Horizon Europe CL2 [14] & Cleaner ``efficient AI workflow'' fit, one year sooner; data-sovereign case study. \\
+N-RICH Prototype / Towards a National Collection (2025--27) & UKRI / AHRC [15] & Sovereign, cyber-hardened on-prem digitisation capability answers N-RICH frameworks. \\
+CoSTAR Network (Live/National/Realtime Labs) & UKRI / AHRC [16] & Supplies game-ready structured assets for real-time / virtual-production pipelines. \\
+Innovate UK Creative Catalyst (\pounds150--200k) & Innovate UK & DreamLab AI leads, UoS collaborates; productise the capture-to-UE tool. \\
+MITIH (MediaCity Immersive Tech Hub) & Innovate UK / UoS & Immediate, local, low-friction proof point on a real GM collection. \\
+National Lottery Heritage Grants (rolling, $\le$\pounds250k) & NLHF & Fund a cultural partner to run a real digitisation case study. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\textbf{Positioning.} Sequence the domestic funders as rungs that de-risk the 2027 EU anchor:
+MITIH and Innovate UK for near-term productisation and a local proof point; CoSTAR and AHRC/N-RICH
+to embed Vitrine as shared real-time capability and a national sovereign-digitisation asset;
+National Lottery Heritage Grants to generate the real-world case histories the Community-of-Practice
+pilot bid promised. Each rung produces the partnerships and evidence the HERITAGE-08 consortium bid
+needs, and every rung leads with the same sovereign, own-your-data framing that the hardened
+mono-image makes credible.
+
+\section*{References}
+\small
+\begin{enumerate}[leftmargin=2.2em,label={[\arabic*]}]
+\item UNESCO/WRI --- \emph{Nearly three-quarters of World Heritage sites at high risk from water-related hazards} (2025). \url{https://whc.unesco.org/en/news/2788}
+\item Tallon Notre-Dame laser scan (2010; $>$1B points, $\sim$5\,mm; restoration blueprint) --- GIM International. \url{https://www.gim-international.com/content/news/the-indispensable-role-of-point-cloud-data-in-rebuilding-notre-dame}
+\item National Museum of Brazil fire (collection scale; 3D reconstruction from prior imagery). \url{https://en.wikipedia.org/wiki/National_Museum_of_Brazil_fire}
+\item Pew Research --- \emph{When Online Content Disappears} (link rot, 2024). \url{https://www.pewresearch.org/data-labs/2024/05/17/when-online-content-disappears/}
+\item Digital Preservation Coalition --- \emph{Global Bit List 2023} (87 endangered categories). \url{https://www.dpconline.org/our-work/digitally-endangered-species}
+\item CLIR Pub 54 --- \emph{Life Expectancy: How Long Will Magnetic Media Last?} \url{https://www.clir.org/pubs/reports/pub54/4life_expectancy/}
+\item ICOM / ICCROM --- \emph{Collections in Storage} ($\sim$5--10\% displayed). \url{https://icom.museum/wp-content/uploads/2024/05/Report_ICOM-STORAGE_EN_Final.pdf}
+\item University of Glasgow --- \emph{Museums in the Metaverse} (\pounds5.6m; 79\% interested), via Blooloop. \url{https://blooloop.com/museum/in-depth/emerging-museum-technologies/}
+\item Indigenous data sovereignty / CARE and digital repatriation. \url{https://terentia.io/blog/indigenous-data-sovereignty-cultural-heritage} ; \url{https://en.wikipedia.org/wiki/Digital_repatriation}
+\item Khronos --- OpenUSD/glTF interoperability (glTF = ISO/IEC 12113:2022). \url{https://www.khronos.org/blog/building-bridges-in-3d-aousd-and-khronos-collaborate-on-openusd-and-gltf-interoperability}
+\item Gaussian Heritage (3DGS + integrated per-object segmentation; Docker), arXiv 2409.19039. \url{https://arxiv.org/abs/2409.19039}
+\item RealityScan 2.1 (on-prem photogrammetry; COLMAP/RF export; does not train 3DGS) --- CG Channel. \url{https://www.cgchannel.com/2025/11/epic-games-releases-realityscan-2-1/}
+\item 3DGS-in-engine limitations and the mesh path. \url{https://www.polyvia3d.com/guides/gaussian-splatting-unity-unreal} ; \url{https://www.strayspark.studio/blog/gaussian-splatting-unreal-engine-5-capture-to-game-pipeline}
+\item Horizon Europe Work Programme 2026--2027, Cluster 2 (HERITAGE topics). \url{https://ec.europa.eu/info/funding-tenders/opportunities/docs/2021-2027/horizon/wp-call/2026-2027/wp-5-culture-creativity-and-inclusive-society_horizon-2026-2027_en.pdf}
+\item N-RICH Prototype / Towards a National Collection (UKRI/AHRC). \url{https://www.nationalcollection.org.uk/n-rich-prototype}
+\item CoSTAR --- Convergent Screen Technologies and Performance in Realtime (UKRI/AHRC). \url{https://www.ukri.org/councils/ahrc/remit-programmes-and-priorities/convergent-screen-technologies-and-performance-in-realtime-costar/}
+\end{enumerate}
+
+\end{document}

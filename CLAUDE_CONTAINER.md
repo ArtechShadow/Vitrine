@@ -8,8 +8,12 @@ inspect results between steps, and decide what to do next.
 
 **CRITICAL: You MUST complete ALL stages through to the textured UE scene and validation.
 Do NOT stop after training. The full pipeline is:
-ingest -> select_frames -> reconstruct -> train -> segment -> extract_objects -> mesh_objects
+decode/ingest -> select_frames -> reconstruct -> train -> render_previews -> segment -> extract_objects -> mesh_objects
   -> mesh_env -> clean_mesh(smooth=0) -> bake_textures(xatlas) -> export_fbx -> ue_import -> validate**
+
+For **still-image captures** (DNG/HEIC/JPEG folders) the first stage is `decode`
+(`image_decoder.decode_directory`), not `ingest` (which is video-only ffmpeg extraction).
+Both converge at `select_frames`.
 
 > **End-state = textured polygonal scene in UE 5.8 (game assets), NOT USD.** USD assembly is
 > demoted to an OPTIONAL/archival side-step — UE cannot import LichtFeld's native USD
@@ -96,12 +100,38 @@ For each queued job, run the pipeline stage by stage.
 
 ---
 
-## Step 1: Ingest -- extract frames from video
+## Step 1: Decode / Ingest
 
-Extract frames at 4fps to oversample, then select the best subset.
+### 1a: Still-image captures (DNG / HEIC / JPEG folders) — **rawcapdev-validated path**
+
+Camera-raw (DNG/ARW/CR2) and HEIC files must be decoded before COLMAP or
+frame-QA can read them. `image_decoder._decode_rawpy` uses `use_camera_wb=True`
+so the camera's as-shot white balance is honoured — without it, libraw falls back
+to daylight WB and indoor DNGs carry a heavy orange cast that propagates into the
+splat and every SAM crop.
 
 ```bash
-python3 -c "
+docker exec gaussian-toolkit python3 -c "
+from pipeline.image_decoder import decode_directory
+manifest = decode_directory('/data/input/JOB_ID', '/data/output/JOB_ID/frames')
+print(manifest)
+"
+```
+
+Alternatively, invoke the module directly:
+
+```bash
+docker exec gaussian-toolkit python3 -m pipeline.image_decoder \
+    /data/input/JOB_ID /data/output/JOB_ID/frames
+```
+
+**Inspect**: verify `manifest['decoded']` matches the source file count; check
+`manifest['failures']` is empty.
+
+### 1b: Video captures — ffmpeg frame extraction
+
+```bash
+docker exec gaussian-toolkit python3 -c "
 from pipeline.stages import PipelineStages
 p = PipelineStages('/data/output/JOB_ID')
 result = p.ingest('/data/output/JOB_ID/input.mp4', fps=4.0)
@@ -140,10 +170,13 @@ If no people, skip to step 3 using the frames directory directly.
 ## Step 3: Select best frames (IMPORTANT for COLMAP registration)
 
 Select 60-80 diverse, high-quality frames from the oversampled set.
-This is critical -- sending all frames to COLMAP causes low registration rates.
+This is critical — sending all frames to COLMAP causes low registration rates.
+The selector scores sharpness at full resolution via the Laplacian variance (downscaled
+blurdetect scores have ~105× less range and can select blurry frames), keeps the
+sharpest frame per time window (FIFO), and gates on MUSIQ NR-IQA.
 
 ```bash
-python3 -c "
+docker exec gaussian-toolkit python3 -c "
 from pipeline.stages import PipelineStages
 p = PipelineStages('/data/output/JOB_ID')
 result = p.select_frames('/data/output/JOB_ID/frames/', target=80)
@@ -163,14 +196,25 @@ curl -X POST http://localhost:7860/api/job/JOB_ID/stage \
 
 ## Step 4: COLMAP reconstruction
 
-Use the **sequential** matcher for video input (NOT exhaustive -- sequential is faster
-and produces better registration rates for video where frames are temporally ordered).
+`reconstruct()` defaults to the **direct COLMAP path** (feature extraction →
+matcher → mapper → `image_undistorter`). The bundled SplatReady plugin is
+bypassed by default: it had a config-name collision that silently clobbered its
+own config and exited 0 on failure. Set `config.reconstruct.use_splatready=True`
+only for the video fast-path where you have explicitly confirmed the plugin works.
+
+`image_undistorter` is called with `--max_image_size 2000`
+(`config.ingest.max_image_size`). Without this cap, full-resolution DNGs undistort
+to ~36 MP and LichtFeld CPU-downscales every image on each load (~5 s/img,
+uncached), which starves the GPU. With the cap, igs+ 30 k iterations train
+GPU-bound at ~99% utilisation (~15 min on an RTX 6000 Ada).
+
+Use the **sequential** matcher for video input; for unordered stills use `exhaustive`.
 
 ```bash
-python3 -c "
+docker exec gaussian-toolkit python3 -c "
 from pipeline.stages import PipelineStages
 p = PipelineStages('/data/output/JOB_ID')
-result = p.reconstruct('/data/output/JOB_ID/frames_selected/', matcher='sequential')
+result = p.reconstruct('/data/output/JOB_ID/frames_selected/')
 print(result)
 "
 ```
@@ -189,8 +233,32 @@ curl -X POST http://localhost:7860/api/job/JOB_ID/stage \
 
 ## Step 5: Train gaussian splatting
 
+`train()` calls the LichtFeld binary with `--log-level info` but uses
+`subprocess.run(capture_output=True)`, so all output is buffered until the
+process exits (~15 min for 30 k iters). **You cannot watch per-iteration loss via
+`train()`.** If you need live progress, run the binary directly and tee to a log:
+
 ```bash
-python3 -c "
+# Watch training progress in real time (run in a separate shell or background)
+docker exec gaussian-toolkit bash -c '
+    /opt/gaussian-toolkit/build/LichtFeld-Studio --headless \
+        --data-path /data/output/JOB_ID/colmap/undistorted \
+        --output-path /data/output/JOB_ID/model \
+        --iter 30000 \
+        --strategy igs+ \
+        --sh-degree 3 \
+        --log-level info \
+    2>&1 | tee /data/output/JOB_ID/train.log
+'
+
+# Poll for the binary while it runs (name is >15 chars — use -f, not -x)
+pgrep -f LichtFeld-Studio
+```
+
+For the standard orchestrated path (fires and returns on completion):
+
+```bash
+docker exec gaussian-toolkit python3 -c "
 from pipeline.stages import PipelineStages
 p = PipelineStages('/data/output/JOB_ID')
 result = p.train('/data/output/JOB_ID/colmap/undistorted/', iterations=30000)
@@ -208,7 +276,36 @@ curl -X POST http://localhost:7860/api/job/JOB_ID/stage \
 **Quality check**: The PLY should be > 10 MB for a good scene.
 If training fails or quality is poor, adjust `iterations` or try `strategy="mcmc"`.
 
-**DO NOT STOP HERE. Continue to segmentation.**
+**DO NOT STOP HERE. Continue to render_previews, then segmentation.**
+
+---
+
+## Step 5a: Render preview images from the splat
+
+`render_previews` orbits gsplat cameras around the trained PLY and saves PNG
+depth + colour previews to `output/JOB_ID/previews/`. The web carousel discovers
+them automatically.
+
+**Important:** `cameras.bin` stores width/height as `uint64`, not `int32`. The
+correct struct format is `'<iiQQ'` (camera_id int32, model_id int32, width uint64,
+height uint64). The old `'<iiii'` format would read `render_h=0` → SIGFPE in the
+rasterizer tile grid; this is fixed in commit b1fb6c4a.
+
+```bash
+docker exec gaussian-toolkit python3 -c "
+from pipeline.stages import PipelineStages
+p = PipelineStages('/data/output/JOB_ID')
+result = p.render_previews(
+    '/data/output/JOB_ID/model/splat_30000.ply',
+    '/data/output/JOB_ID/colmap/undistorted',
+    num_views=8,
+)
+print(result)
+"
+```
+
+**Inspect**: open a preview PNG to verify the splat has no obvious colour cast or
+missing regions before continuing to segmentation.
 
 ---
 
@@ -252,11 +349,18 @@ Quality targets for MILo:
 
 ## Step 6: SAM3 Object Identification
 
-SAM3 identifies freestanding objects using text prompts. HF_TOKEN is set for model download.
-First run downloads ~2.4GB checkpoint (cached in /opt/hf-cache afterward).
+SAM3 identifies freestanding objects using text prompts. HF_TOKEN is set for
+model download. First run downloads ~2.4 GB checkpoint (cached in /opt/hf-cache
+afterward).
+
+**Known issue (as of rawcapdev 2026-07-02):** SAM3 currently returns coarse
+axis-aligned bounding boxes rather than per-object silhouette masks.
+`extract_objects` therefore returns the full-scene gaussian rather than isolated
+per-object sub-clouds. The working object path is a **clean SAM image crop →
+TRELLIS.2 image-to-3D** (ComfyUI on `vitrine-comfyui:8188`); see Step 7d.
 
 ```bash
-python3 -c "
+docker exec gaussian-toolkit python3 -c "
 from pipeline.stages import PipelineStages
 p = PipelineStages('/data/output/JOB_ID')
 result = p.segment(
@@ -267,8 +371,10 @@ print(result)
 "
 ```
 
-**INSPECT THE RESULTS.** Check: how many objects? What labels? Gaussian counts per object?
-If SAM3 fell back to full_scene only, check HF_TOKEN, model download, BPE path.
+**INSPECT THE RESULTS.** Check: how many objects? What labels? Gaussian counts
+per object? If SAM3 fell back to full_scene only, check HF_TOKEN, model download,
+and that `SAM3_BPE_PATH=/opt/sam3-repo/sam3/assets/bpe_simple_vocab_16e6.txt.gz`
+is set in the container environment.
 
 ```bash
 curl -X POST http://localhost:7860/api/job/JOB_ID/stage \
@@ -283,8 +389,13 @@ curl -X POST http://localhost:7860/api/job/JOB_ID/stage \
 **For EACH identified object, run this sub-pipeline. You are iterating.**
 
 ### 7a: Extract per-object gaussian PLY
+
+Due to the SAM3 bounding-box limitation (Step 6), this currently returns the
+full-scene gaussian for each label. It is still worth running to produce the
+per-object directory structure and metadata used by later steps.
+
 ```bash
-python3 -c "
+docker exec gaussian-toolkit python3 -c "
 from pipeline.stages import PipelineStages
 p = PipelineStages('/data/output/JOB_ID')
 result = p.extract_objects('/data/output/JOB_ID/model/splat_30000.ply', OBJECTS_FROM_STEP6)
@@ -318,15 +429,34 @@ curl -s http://localhost:8188/prompt -X POST \
   -d @/data/output/JOB_ID/workflows/hunyuan_mv_OBJECT.json
 ```
 
-### 7d: Create mesh per object (orbit cameras for isolated objects)
+### 7d: Create mesh per object — TRELLIS.2 primary path
+
+`mesh_objects()` routes each per-object PLY to **TRELLIS.2** first (ADR-015,
+commit d2ab4641). TRELLIS.2 runs in the `vitrine-comfyui` container
+(`http://vitrine-comfyui:8188`). Hunyuan3D-2.1 is the automatic fallback if
+TRELLIS.2 fails or is unconfigured. Both routes require the ComfyUI sidecar to
+be running and reachable on the `v2g-net` / `visionclaw_network` before calling
+this stage.
+
+Verify the sidecar is up before proceeding:
 ```bash
-python3 -c "
+curl -s http://vitrine-comfyui:8188/system_stats | python3 -m json.tool
+```
+
+Then run mesh extraction:
+```bash
+docker exec gaussian-toolkit python3 -c "
 from pipeline.stages import PipelineStages
 p = PipelineStages('/data/output/JOB_ID')
 result = p.mesh_objects(['/data/output/JOB_ID/objects/OBJECT_LABEL.ply'])
 print(result)
 "
 ```
+
+The validated object path for the rawcapdev run was a **clean SAM image crop
+(not an orbit render)** fed into TRELLIS.2 image→3D. Use the best-lit frame
+crop of the isolated object as the input image; TRELLIS.2 generates the
+multi-view turnaround sheet and textured GLB internally.
 
 ### 7e: Save object metadata (position, bbox, label, mesh path)
 ```bash
@@ -448,6 +578,24 @@ curl -X POST http://localhost:7860/api/job/JOB_ID/complete \
 | MILo mesh | 50K-500K verts, vertex colors, clean topology | <10K verts or no mesh produced |
 | Final USD | Room + objects with materials | Empty scene |
 
+### Known issues (as of 2026-07-02)
+
+| Area | Issue | Status |
+|------|-------|--------|
+| SAM3 masks | Returns coarse bounding boxes, not per-object silhouettes; `extract_objects` therefore returns the full scene | Open; working path is SAM image crop → TRELLIS.2 |
+| .ksplat production | `make_web_ksplat()` requires Node / npx at runtime; when absent the web viewer falls back to progressive-loading the trained `.ply` directly | Open; Node not pre-installed in the image |
+| Rust onboarding wizard | `vitrine-onboarding` (:8088) still binds `0.0.0.0` (not loopback-restricted) | Open; low priority |
+
+### Process management
+
+The LichtFeld binary name is **`LichtFeld-Studio`** — 16 characters, which exceeds
+the 15-character limit of `pgrep -x`. Always use `pgrep -f` when polling for it:
+
+```bash
+pgrep -f LichtFeld-Studio          # correct
+pgrep -x LichtFeld-Studio          # WRONG — never matches, silently returns nothing
+```
+
 ### Key Environment Variables
 
 | Variable | Value | Purpose |
@@ -458,6 +606,8 @@ curl -X POST http://localhost:7860/api/job/JOB_ID/complete \
 
 ### REST API
 
+The web UI at :7860 now includes a file browser, per-run zip download, and 3D splat viewer (PR #6 UX consolidation, ADR-023); it binds 127.0.0.1 by default — set LFS_WEB_HOST only for container-bus access.
+
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
 | POST | `/api/job/<id>/stage` | Report stage progress |
@@ -465,6 +615,16 @@ curl -X POST http://localhost:7860/api/job/JOB_ID/complete \
 | POST | `/api/job/<id>/complete` | Mark job done |
 | GET | `/status/<id>` | Job detail |
 | GET | `/api/job/<id>/previews` | List preview images |
+| GET | `/api/runs` | Richer run list synthesized from job_manager + on-disk outputs (thumbnail via derivatives URL) |
+| GET | `/api/runs/<id>/tree` | Recursive file tree for output/<id>/; dotfiles + .secrets excluded; [{path,size,kind}] |
+| GET | `/api/runs/<id>/zip` | Streamed zip (zipstream-ng, constant memory); default excludes colmap db/raw frames; `?include=all` for full tree |
+| GET | `/api/runs/<id>/file?path=` | Range-served file preview path-jailed to output/<id>/; images/text inline, .glb→mesh viewer, .ply/.ksplat→splat viewer |
+| GET | `/api/scenes/*` | SPA alias facade (scene_id == job_id 1:1): list scenes, get scene detail, progress polling, frames list, derivatives, delete, export; SSE /stream/<id> remains canonical progress channel |
+| GET | `/api/scenes/<id>/splat/<filename>` | Range/ETag-served .ksplat/.ply for gaussian-splats-3d viewer; discovery order: output/<id>/web/scene.ksplat → model/*.ply → *.splat; traversal-guarded |
+| GET | `/api/system/stats` | System stats via pynvml/psutil best-effort; returns zeros + gpu_available:false when unavailable |
+| POST | `/api/scenes/upload-images` | Batch stills (jpg/png/DNG/HEIC) multipart → image_decoder.decode_directory → enqueue; 2 GB cap, secure_filename, ext allow-list |
+| POST | `/api/scenes/upload-zip` | Zip capture bundle multipart; extracted with zip-slip guard + decompressed-size cap into new job input dir |
+| POST | `/api/import/google-drive` | Drive URL ingest via existing gdown logic (images-preferred); returns {scene_id, state:'downloading'}; no new secret surface |
 
 ### MANDATORY: Save preview images
 

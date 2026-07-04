@@ -2,6 +2,108 @@
 
 Development history and key decisions for the Gaussian Toolkit fork of LichtFeld Studio.
 
+## 2026-07-02 — First LichtFeld-native E2E on real raw capture (rawcapdev) + build, pipeline, and web fixes
+
+### E2E milestone: rawcapdev gallery still-life
+
+First complete run of the LichtFeld-native pipeline on fresh raw capture:
+**55 Pixel DNG frames** of a gallery still-life (brass patina vessel + inverted Heinz ketchup bottle)
+decoded via rawpy → 50–55 sharpest selected → **COLMAP 100% registration, 10.4k sparse points** →
+**LichtFeld igs+ 4M-Gaussian splat** trained GPU-bound → render + inspect.
+Keeper renders committed to `docs/renders/rawcapdev-2026-07-02/`
+(neutral-WB training run: `e4d0dd17`; hero crop + SAM3 overlay: `a6334fae`).
+
+Object stage: SAM3 concept segmentation runs but currently returns **coarse bounding boxes, not
+per-pixel silhouettes** (known issue — `extract_objects` therefore returns the full scene PLY).
+The working object path is a clean SAM image crop → TRELLIS.2 image→3D (ComfyUI/TRELLIS.2 live).
+
+**Known open issues:** SAM3 box-mask output blocks per-object isolation; `.ksplat` runtime production
+is inert (the viewer falls back to `.ply`); the Rust onboarding wizard still binds `0.0.0.0`.
+
+### LichtFeld v0.5.3 baked into the mega-image (commit `8944cf6e`)
+
+Added a `lichtfeld-builder` multi-stage that compiles the vendored v0.5.3 submodule via the proven
+upstream CI recipe (`lf_build2.sh` + `lf_stage.sh`) and `COPY --from=lichtfeld-builder` the binary
++ runtime `.so` into the runtime image. Removes the `./build:ro` bind-mount from compose — that bind
+was **shadowing the in-image binary with an empty host dir**, causing the silent gsplat fallback on
+every run. Binary is now in-image at `/opt/gaussian-toolkit/build`; no host build required.
+
+Follow-up commit `309e8964` fixed a gap in `lf_stage.sh`: its flat `-type f` copy missed symlinked
+sonames (`libusd_*.so`) and external-dep libs (`libnvimgcodec.so.0`, `libOpenMeshCore`). Fix: `COPY`
+the whole `build-lf` tree from the cached builder stage into `/opt/lichtfeld-build` and `ldconfig`-index
+every `.so` directory — the binary now resolves all libs regardless of RUNPATH or symlinks.
+
+### reconstruct() defaults to direct COLMAP; undistort image cap (commit `77c64b4c`)
+
+Two defects that blocked the first LichtFeld-native E2E on real raw capture:
+
+1. **SplatReady plugin config collision.** The bundled SplatReady plugin derives its progress-file path
+   via `str.replace("_run_config.json", "_progress.txt")`. `stages.py` named the config
+   `"splatready_config.json"` (no matching substring), so the status path **collided with the config**
+   and the runner clobbered its own config mid-run (`JSONDecodeError` on reuse). The runner also exits 0
+   on failure, silently swallowing errors. `reconstruct()` now defaults to the transparent
+   `_run_colmap_direct` path; SplatReady stays opt-in behind `config.reconstruct.use_splatready` with
+   the naming bug fixed and stdout captured in the error.
+
+2. **Undistorted images were 36MP.** `_run_colmap_direct()` omitted `--max_image_size`, so undistorted
+   training images came out full-resolution (~7000px). LichtFeld CPU-downscales anything wider than its
+   `--max-width` (3840px) **on every load** — ~5 s/image, uncached — starving the GPU at 0% utilisation
+   during 30k-iteration training (projected to hours). Now passes `--max_image_size` from
+   `config.ingest.max_image_size` (default 2000); intrinsics are baked in by the undistorter. Validated:
+   igs+ 30k trains GPU-bound at 99% util, completing in ~15 min on the rawcapdev set.
+
+### Camera white-balance + cameras.bin uint64 parse fix (commit `b1fb6c4a`)
+
+- **`image_decoder._decode_rawpy`: `use_camera_wb=True`.** Without it, libraw applies a fixed daylight
+  white balance, leaving a heavy warm/orange cast on indoor DNG captures. The cast propagated into the
+  splat and every downstream SAM crop / object texture. With the Pixel's as-shot WB the gallery walls
+  render neutral white (verified on rawcapdev — retrained neutral-WB renders in `e4d0dd17`).
+
+- **`stages.render_previews`: `cameras.bin` stores `width`/`height` as `uint64`, not `int32`.** The old
+  `'<iiii'` struct read split the 64-bit width field into `(w, high32=0)`, yielding `render_h=0` → SIGFPE
+  (core dump) in the gsplat rasterizer. Fixed to `'<iiQQ'` (uint32 id, int32 model, uint64 w, uint64 h).
+  Preview render now succeeds from real COLMAP camera poses.
+
+### Object recon routed to TRELLIS.2 (commit `d2ab4641`)
+
+`_mesh_single` Strategy 0 (gsplat→TSDF) is now gated to full-scene PLYs only. Isolated per-object PLYs
+go to **TRELLIS.2 first** (ADR-015 `hull_e2e`-validated) instead of a holey orbit-TSDF — this is the
+object-quality lever for the e2e goal (gap #8 closed). `Hunyuan3DConfig` endpoint corrected from the
+stale `localhost:8189/3001` default to `vitrine-comfyui:8188` (gap #5).
+
+### Build persistence: scipy/numpy reconcile + zipstream-ng + pynvml
+
+`Dockerfile.consolidated` gained two sets of changes this pass:
+
+- **`zipstream-ng` + `pynvml`** added to the pip install layer (commit `25c6ab78`) — required by the
+  new web zip-streaming endpoint and the system-stats API.
+
+- **scipy/numpy reconciliation after SAM3** (working-tree change, uncommitted): SAM3 pins `numpy<2`,
+  leaving the image with numpy 1.26 alongside a modern scipy whose wheel references `np.long` (removed in
+  numpy ≥ 1.24) → `import scipy.spatial` crashed at runtime, breaking `select_frames` and `reconstruct`.
+  Upgrading scipy pulls a numpy ≥ 2 wheel; the pairing (`numpy 2.x + scipy≥1.15 + matplotlib`) was
+  validated end-to-end on rawcapdev. `matplotlib` is also installed here (needed for
+  `render_previews` depth colormaps). SAM3's `numpy<2` pin is advisory and verified-tolerant of numpy 2.x
+  in this configuration. Proper long-term fix is per-tool venv isolation (ADR-022 P2).
+
+### Web consolidation: PR #6 ArchiveSpace + loopback-only Flask (commit `25c6ab78`, ADR-023)
+
+The community ArchiveSpace React SPA (PR #6) was absorbed as **patterns, not code** — its backend was
+mocked `delay()` stubs — and the existing Flask control surface was extended instead. Four additive
+blueprints (`scenes_api`, `files_api`, `zip_api`, `splat_api`) over the existing job store; vendored
+offline `@mkkellogg/gaussian-splats-3d` viewer (`src/web/static/vendor/`, no CDN); a Vitrine-owned
+Vite+React app at `src/web/frontend/` compiled at image-build time via a throwaway `node:20-alpine`
+stage (`BUILD_SPA` gate, default off).
+
+**Security fix (ADR-022):** `app.py` was binding `host="0.0.0.0"` — fixed to `127.0.0.1` by default,
+with `LFS_WEB_HOST=0.0.0.0` as an explicit docker-net opt-in. The compose default was also flipped to
+`127.0.0.1:7860`. The web UI is now reached via `ssh -N -L 7860:localhost:7860` (IT-signable posture).
+
+QE-fix pass caught one critical route bug: the blueprint loader imported `web.api.<name>` but modules
+are flat `web.<name>` → all four blueprints silently 404'd. Fixed; verified 64 routes register.
+
+---
+
 ## 2026-06-24 — Scene-mesh refinement + ArtiFixer trial launched
 
 Two parallel levers on the **dreamlab/locked** scene mesh; full consolidated write-up

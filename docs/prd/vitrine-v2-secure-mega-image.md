@@ -48,10 +48,12 @@ no host bind-mounts of code or binaries and no unauthenticated LAN surface.
 - Decode (DNG/HEIC/WebP → COLMAP-native) and the existing image→pipeline handoff are reused; the stills-ingest case-sensitivity blocker (fixed 2026-07-02) is a prerequisite.
 
 ### R5 — Integrated run browser + preview (must)
-- A **runs list** (each `output/<run>`), a **file tree** per run, and a **preview pane**: images (thumbnails + lightbox), splats (`.ply`/`.ksplat` web viewer, reuse `viewer.html`), meshes (`.glb`/`.obj`), text/logs, `capture.json`, metrics. Read-only, path-jailed to `output/`.
+- A **runs list** (each `output/<run>`), a **file tree** per run, and a **preview pane**: images (thumbnails + lightbox), splats (`.ply`/`.ksplat` in-browser 3D viewer — see below), meshes (`.glb`/`.obj`), text/logs, `capture.json`, metrics. Read-only, path-jailed to `output/`.
+- **Splat viewer:** `.ply`/`.ksplat` files are rendered in-browser via [`@mkkellogg/gaussian-splats-3d`](https://github.com/mkkellogg/GaussianSplats3D), bundled into `static/vendor/` (ships in-image, no CDN dependency). The library is fed via `GET /api/scenes/<id>/splat/<filename>` (Range- and ETag-supported; discovery order: `output/<id>/web/scene.ksplat` → `model/*.ply` → `*.splat`). The generic per-run file path `GET /api/runs/<id>/file?path=` also resolves splat assets for the file-browser preview pane. See ADR-023.
 
 ### R6 — Per-run asset zip download (must)
 - One click downloads **all assets for a run as a `.zip`** (streamed, so a multi-GB run doesn't buffer in RAM), with a sane manifest and exclusion of huge regenerable intermediates by default (toggle to include).
+- **Endpoint:** `GET /api/runs/<id>/zip?include=all|assets` — `assets` (default) excludes COLMAP databases, undistorted frame dumps, and raw frame caches; `all` includes the full run tree. Streamed via **zipstream-ng** (constant memory, no buffering). The legacy `GET /download/<job_id>` route is kept unchanged for the existing Jinja UI. See ADR-023.
 
 ### R7 — Operate via web + tab6-rebuild-only workflow (must)
 - All routine operation (ingest, monitor, browse, download, disk usage, health) is in the web UI, reachable **over the docker network / SSH bridge**. The host shell (tab 6) is used **only to rebuild** the image. Inspection never requires `docker exec`.
@@ -98,6 +100,7 @@ ssh -N -L 7860:localhost:7860 <user>@<rig-host>
 # then open http://localhost:7860 in your browser.
 # (The rig publishes 7860 only on its own 127.0.0.1; nothing is on the LAN.)
 ```
+The file browser, per-run zip download, and 3D splat viewer are all reachable through this single tunnel.
 
 ## 7. Acceptance criteria (verifiable over the docker network / SSH bridge)
 1. `docker build` → single image; `up` → `curl http://gaussian-toolkit:7860/health` ok on the docker net; LAN `curl` to the rig IP fails.

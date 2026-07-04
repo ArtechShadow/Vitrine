@@ -569,6 +569,16 @@ class PipelineStages:
     def reconstruct(self, frames_dir: str) -> StageResult:
         """Run COLMAP SfM reconstruction.
 
+        Defaults to the transparent direct-COLMAP path (_run_colmap_direct):
+        feature_extractor → matcher → mapper → image_undistorter. The bundled
+        SplatReady plugin is available behind ``config.reconstruct.use_splatready``
+        but is off by default due to two failure modes: (1) its status-file path
+        is derived by string-replacing ``_run_config.json`` in the config path, so
+        any config with a different suffix has the status path collide with the
+        config itself, clobbering it mid-run; (2) the plugin exits 0 on failure,
+        making the return code unreliable. The direct path validates output via the
+        registration-rate gate (>30% of frames must register).
+
         Returns: {colmap_dir, cameras, points}
         """
         frames_path = Path(frames_dir)
@@ -687,7 +697,16 @@ class PipelineStages:
         )
 
     def _run_colmap_direct(self, output_dir: Path, frame_dir: Path) -> None:
-        """Fallback: run COLMAP feature extraction + matching + mapper."""
+        """Default COLMAP path: feature_extractor → matcher → mapper → image_undistorter.
+
+        The image_undistorter step caps output resolution via ``--max_image_size``
+        (``config.ingest.max_image_size``, default 2000px). Without this cap, raw
+        inputs (e.g. 36MP DNGs decoded at full resolution) cause LichtFeld to
+        CPU-downscale on every load iteration — that path is not disk-cached, costs
+        ~5 s/image, and starves the GPU, turning a 30k-iter run into hours. With
+        the cap, LichtFeld takes its fast no-resample path and stays GPU-bound
+        (~15 min at ≥99% utilisation for a typical 30k igs+ run).
+        """
         db_path = output_dir / "database.db"
         sparse_dir = output_dir / "sparse"
         sparse_dir.mkdir(parents=True, exist_ok=True)
@@ -767,6 +786,12 @@ class PipelineStages:
           training. Produces BOTH the gaussian PLY and a high-quality mesh in a
           single pass, so the ``mesh_objects`` stage can be skipped for the
           scene-level mesh.
+
+        The LichtFeld binary is baked into the consolidated image at build time
+        (``/opt/gaussian-toolkit/build/LichtFeld-Studio``); ``ldconfig`` indexes
+        the full vcpkg lib tree so all shared objects resolve without a manual
+        ``LD_LIBRARY_PATH`` prefix — this path is still set at runtime for host
+        CUDA libs mounted at ``/opt/host-cuda-libs``.
 
         Returns: {ply_path, loss} -- and for MILo also {milo_mesh_path}
         """
@@ -1376,6 +1401,11 @@ class PipelineStages:
 
         Saves to job_dir/previews/ for the web carousel.
 
+        cameras.bin parsing uses the struct format ``<iiQQ`` (camera_id int32,
+        model_id int32, width uint64, height uint64). The previous ``<iiii``
+        format split the 64-bit width field into two int32s, making render_h=0
+        and causing a SIGFPE in the gsplat rasterizer tile-grid division.
+
         Args:
             ply_path: Path to trained 3DGS PLY.
             colmap_dir: Path to COLMAP reconstruction (with sparse/0/).
@@ -1623,6 +1653,13 @@ class PipelineStages:
         orchestrator (the claude_code agent / web / MCP layer); absent a callback
         discovery degrades to the static concept list.
 
+        Known issue: SAM3 currently returns coarse axis-aligned bounding boxes
+        rather than pixel-level silhouettes (``segment_by_concepts`` mask output).
+        As a result ``extract_objects`` receives the full scene extent for each
+        concept and the mask-based gaussian isolation has no effect — it falls back
+        to copying the full PLY. The working object path until this is resolved is
+        a manual SAM image crop fed into TRELLIS.2 image→3D via ComfyUI.
+
         Returns: {objects: list[{label, object_id, mask_pixels}], masks_dir}
         """
         import cv2
@@ -1789,6 +1826,14 @@ class PipelineStages:
 
     def extract_objects(self, ply_path: str, labels: dict | list | str | None = None) -> StageResult:
         """Extract per-object PLY files from the trained model.
+
+        Per-object PLYs produced here are routed downstream to TRELLIS.2 for
+        textured mesh reconstruction (gap #8). The ComfyUI endpoint for TRELLIS.2
+        is ``http://vitrine-comfyui:8188`` (service-DNS within ``v2g-net``). When
+        SAM3 silhouette masks are available, gaussians are isolated via depth-aware
+        multi-view projection (ADR-010 D10); otherwise the full PLY is copied and
+        TRELLIS.2 receives the whole-scene point cloud for each object — usable
+        only when the object occupies most of the scene.
 
         Args:
             ply_path: Path to the trained gaussian PLY.

@@ -1,0 +1,79 @@
+% vitrine_preamble.tex — shared house style for Vitrine compact institutional reports.
+% \input this after \documentclass[a4paper,11pt]{article}. Builds with pdflatex/tectonic.
+% House palette inherited from report/v5/main.tex (UoSRed = University of Salford red).
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[british]{babel}
+\usepackage{microtype}
+\usepackage[a4paper,top=22mm,bottom=22mm,inner=20mm,outer=20mm,headheight=26pt]{geometry}
+\usepackage{lmodern}
+\usepackage[dvipsnames,svgnames,x11names]{xcolor}
+
+\definecolor{UoSRed}{HTML}{B71234}
+\definecolor{DreamLabAccent}{HTML}{6366F1}
+\definecolor{DarkBg}{HTML}{0F172A}
+\definecolor{MidGrey}{HTML}{64748B}
+\definecolor{LightGrey}{HTML}{F1F5F9}
+\definecolor{CodeBg}{HTML}{1E293B}
+\definecolor{SuccessGreen}{HTML}{15803D}
+\definecolor{WarningAmber}{HTML}{B45309}
+\definecolor{DangerRed}{HTML}{B91C1C}
+
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+\usepackage{amsmath,amssymb}
+\usepackage{csquotes}
+\usepackage{enumitem}
+\setlist{nosep,leftmargin=1.2em,topsep=2pt}
+\usepackage{caption}
+\captionsetup{font=small,labelfont={bf,color=UoSRed}}
+\usepackage[most]{tcolorbox}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage[colorlinks=true,linkcolor=UoSRed,citecolor=DreamLabAccent,urlcolor=DreamLabAccent,
+  breaklinks=true]{hyperref}
+\usepackage{enumitem}
+
+% --- Section styling: red rule + tight spacing (compact) ---
+\titleformat{\section}{\color{UoSRed}\Large\bfseries}{\thesection}{0.6em}{}[{\color{UoSRed!30}\titlerule[1pt]}]
+\titleformat{\subsection}{\color{DarkBg}\large\bfseries}{\thesubsection}{0.5em}{}
+\titlespacing*{\section}{0pt}{10pt}{5pt}
+\titlespacing*{\subsection}{0pt}{7pt}{3pt}
+
+% --- Header / footer ---
+\pagestyle{fancy}\fancyhf{}
+\renewcommand{\headrulewidth}{0.6pt}
+\renewcommand{\headrule}{\hbox to\headwidth{\color{UoSRed}\leaders\hrule height \headrulewidth\hfill}}
+\fancyhead[L]{\small\color{MidGrey}\VitrineDocKicker}
+\fancyhead[R]{\small\color{MidGrey}\textbf{\color{UoSRed}Vitrine}}
+\fancyfoot[L]{\scriptsize\color{MidGrey}DreamLab AI Consulting Ltd \textperiodcentered{} University of Salford}
+\fancyfoot[R]{\scriptsize\color{MidGrey}\thepage}
+\newcommand{\VitrineDocKicker}{Vitrine}
+
+% --- Callout boxes ---
+\newtcolorbox{keyfinding}[1][]{colback=UoSRed!5,colframe=UoSRed,boxrule=0.8pt,arc=2pt,
+  left=6pt,right=6pt,top=4pt,bottom=4pt,fonttitle=\bfseries\color{white},
+  coltitle=white,colbacktitle=UoSRed,title={#1}}
+\newtcolorbox{technote}[1][]{colback=DreamLabAccent!6,colframe=DreamLabAccent,boxrule=0.7pt,arc=2pt,
+  left=6pt,right=6pt,top=4pt,bottom=4pt,fonttitle=\bfseries\color{white},
+  coltitle=white,colbacktitle=DreamLabAccent,title={#1}}
+\newtcolorbox{riskbox}[1][]{colback=WarningAmber!7,colframe=WarningAmber,boxrule=0.7pt,arc=2pt,
+  left=6pt,right=6pt,top=4pt,bottom=4pt,fonttitle=\bfseries\color{white},
+  coltitle=white,colbacktitle=WarningAmber,title={#1}}
+
+% --- Title block macro: \vitrinetitle{Title}{Subtitle}{Audience line} ---
+\newcommand{\vitrinetitle}[3]{%
+  \begin{tcolorbox}[colback=DarkBg,colframe=DarkBg,arc=3pt,left=14pt,right=14pt,top=12pt,bottom=12pt]
+    {\color{white}\Huge\bfseries #1}\\[4pt]
+    {\color{LightGrey}\large #2}\\[8pt]
+    {\color{DreamLabAccent}\small\bfseries #3}
+  \end{tcolorbox}\vspace{4pt}%
+}
+
+\newcommand{\code}[1]{{\small\ttfamily #1}}
+\setlength{\parskip}{4pt}\setlength{\parindent}{0pt}

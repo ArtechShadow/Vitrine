@@ -13,6 +13,7 @@ The old PipelineRunner that drove the state machine is removed.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -294,10 +295,309 @@ def complete_stage(job_id: str, stage: str, success: bool = True, error: str = "
     return True
 
 
+# ---------------------------------------------------------------------------
+# Web splat derivative (mkkellogg .ksplat) -- additive, post-training stage.
+# ---------------------------------------------------------------------------
+#
+# Emits output/<id>/web/scene.ksplat for the embedded @mkkellogg/gaussian-splats-3d
+# viewer.  Gated on the converter being available in-image (see
+# pipeline.splat_optimizer for the compatibility verdict: splat-transform cannot
+# produce this bitstream).  When the converter is unavailable the stage skips
+# cleanly and the viewer falls back to progressive-loading the trained .ply.
+#
+# INVARIANT: the source trained .ply is only ever read here -- never mutated,
+# moved, or renamed (it is the source-of-truth for the NanoGS/UE + mesh handoff).
+
+# Web derivative filename the splat route discovers first (output/<id>/web/…).
+_WEB_KSPLAT_NAME = "scene.ksplat"
+
+# Directories that never hold the trained *scene* PLY (objects, derivatives).
+_NON_SCENE_PLY_TOPS = {"objects", "web", "delivery", "usd"}
+
+
+def _sha256_file(path: Path) -> str:
+    """Return the hex SHA-256 of a file, streamed in 1 MiB chunks."""
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _iteration_number(name: str) -> int:
+    """Parse the trailing integer from an ``iteration_<N>`` directory name."""
+    try:
+        return int(name.rsplit("_", 1)[-1])
+    except (ValueError, IndexError):
+        return -1
+
+
+def _find_trained_scene_ply(output_dir: Path) -> Path | None:
+    """Locate the trained *scene* Gaussian PLY (source-of-truth).
+
+    Never returns a per-object reconstruction or an already-optimised
+    derivative.  Discovery order mirrors the pipeline's own layout
+    (CLAUDE_CONTAINER.md): ``model/splat_30000.ply`` -> ``splat/scene.ply`` ->
+    highest-iteration ``model/point_cloud/iteration_*/point_cloud.ply`` ->
+    largest ``model/*.ply`` -> largest PLY elsewhere (objects/derivatives
+    excluded).
+    """
+    named = [
+        output_dir / "model" / "splat_30000.ply",
+        output_dir / "splat" / "scene.ply",
+    ]
+    for p in named:
+        if p.is_file() and p.stat().st_size > 0:
+            return p
+
+    model_dir = output_dir / "model"
+    if model_dir.is_dir():
+        iter_plys = sorted(
+            model_dir.glob("point_cloud/iteration_*/point_cloud.ply"),
+            key=lambda q: _iteration_number(q.parent.name),
+        )
+        iter_plys = [q for q in iter_plys if q.stat().st_size > 0]
+        if iter_plys:
+            return iter_plys[-1]
+
+        splat_plys = [
+            q for q in model_dir.glob("splat_*.ply") if q.stat().st_size > 0
+        ]
+        if splat_plys:
+            return max(splat_plys, key=lambda q: q.stat().st_size)
+
+        model_plys = [q for q in model_dir.glob("*.ply") if q.stat().st_size > 0]
+        if model_plys:
+            return max(model_plys, key=lambda q: q.stat().st_size)
+
+    candidates = [
+        p
+        for p in output_dir.rglob("*.ply")
+        if p.is_file()
+        and p.stat().st_size > 0
+        and (p.relative_to(output_dir).parts[:1] or [""])[0]
+        not in _NON_SCENE_PLY_TOPS
+    ]
+    if candidates:
+        return max(candidates, key=lambda q: q.stat().st_size)
+    return None
+
+
+def _record_web_derivative_stage(job_id: str, status: str, **extra: Any) -> None:
+    """Durably record the web-derivative outcome in the job's ``stages`` dict.
+
+    Uses a load-merge-save through the job_manager public API so the entry
+    survives later ``asdict``-based saves (a bare undeclared attribute would
+    not).  ``web_splat_path`` is also mirrored to the top level via
+    ``update_job`` for forward compatibility with a ``Job.web_splat_path``
+    field (surfaces as ``ksplat_path`` in the scenes API); that call is a
+    harmless no-op until the field is declared.
+    """
+    from web.job_manager import get_job, update_job
+
+    job = get_job(job_id)
+    if job is None:
+        return
+
+    stages = dict(job.stages)
+    entry = dict(stages.get("web_derivative", {"name": "web_derivative"}))
+    entry["status"] = status
+    entry["finished_at"] = time.time()
+    entry.update(extra)
+    stages["web_derivative"] = entry
+
+    fields: dict[str, Any] = {"stages": stages}
+    web_splat_path = extra.get("web_splat_path")
+    if web_splat_path:
+        fields["web_splat_path"] = web_splat_path
+    update_job(job_id, **fields)
+
+
+def generate_web_derivative(job_id: str, config: Any = None) -> dict[str, Any]:
+    """Produce the mkkellogg ``.ksplat`` web derivative for a completed job.
+
+    Additive and non-fatal: any failure is logged and recorded but never fails
+    the job.  Writes ``output/<id>/web/scene.ksplat`` plus a
+    ``output/<id>/web/manifest.json`` sidecar, and records the outcome in the
+    job record.  The trained source ``.ply`` is only ever read.
+
+    Args:
+        job_id: The job identifier.
+        config: Optional ``pipeline.splat_optimizer.WebKsplatConfig``.
+
+    Returns:
+        A dict with ``status`` (``"ready"`` | ``"skipped"`` | ``"failed"``),
+        ``web_splat_path`` (or ``None``), ``fallback_ply``, ``reason``, and the
+        source PLY sha256 (identical before and after -- the invariant).
+    """
+    from web.job_manager import get_job, append_log
+
+    outcome: dict[str, Any] = {
+        "status": "skipped",
+        "web_splat_path": None,
+        "fallback_ply": None,
+        "reason": None,
+        "source_sha256": None,
+        "source_sha256_stable": True,
+    }
+
+    job = get_job(job_id)
+    if job is None:
+        outcome["reason"] = "job not found"
+        return outcome
+
+    output_dir = Path(job.output_dir)
+    if not output_dir.is_dir():
+        outcome["reason"] = f"output dir missing: {output_dir}"
+        return outcome
+
+    source_ply = _find_trained_scene_ply(output_dir)
+    if source_ply is None:
+        outcome["reason"] = "no trained scene .ply found; nothing to convert"
+        append_log(job_id, "web derivative: no trained scene .ply found — skipped")
+        _record_web_derivative_stage(job_id, "skipped", reason=outcome["reason"])
+        return outcome
+
+    try:
+        rel_source = str(source_ply.relative_to(output_dir))
+    except ValueError:
+        rel_source = str(source_ply)
+    outcome["fallback_ply"] = rel_source
+
+    # Invariant guard: capture the source hash before conversion.
+    sha_before = _sha256_file(source_ply)
+    outcome["source_sha256"] = sha_before
+
+    web_dir = output_dir / "web"
+    web_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        from pipeline.splat_optimizer import make_web_ksplat, WebKsplatConfig
+    except ImportError as exc:
+        outcome["reason"] = f"splat_optimizer not importable: {exc}"
+        append_log(job_id, f"web derivative: splat_optimizer unavailable ({exc}) — skipped")
+        _record_web_derivative_stage(
+            job_id, "skipped", reason=outcome["reason"], fallback_ply=rel_source
+        )
+        _write_web_manifest(web_dir, output_dir, job_id, outcome, None)
+        return outcome
+
+    cfg = config or WebKsplatConfig()
+    result = make_web_ksplat(str(source_ply), str(web_dir), cfg, output_name=_WEB_KSPLAT_NAME)
+
+    # Re-verify the source PLY was not touched (belt-and-braces on the invariant).
+    sha_after = _sha256_file(source_ply)
+    outcome["source_sha256_stable"] = sha_before == sha_after
+    if not outcome["source_sha256_stable"]:
+        logger.error(
+            "INVARIANT VIOLATION: trained PLY sha256 changed during web "
+            "derivative for job %s (%s != %s)",
+            job_id, sha_before, sha_after,
+        )
+        append_log(job_id, "web derivative: WARNING source .ply hash changed (invariant)")
+
+    if result["success"]:
+        ksplat_path = Path(result["output_path"])
+        outcome["status"] = "ready"
+        outcome["web_splat_path"] = str(ksplat_path)
+        append_log(
+            job_id,
+            f"web derivative ready: web/{_WEB_KSPLAT_NAME} "
+            f"({result['splat_count']} splats, {result['output_size_mb']:.1f} MB, "
+            f"{result['compression_ratio']:.1f}x)",
+        )
+        _record_web_derivative_stage(
+            job_id,
+            "completed",
+            web_splat_path=str(ksplat_path),
+            ksplat_path=f"web/{_WEB_KSPLAT_NAME}",
+            splat_count=result["splat_count"],
+            output_size_mb=round(result["output_size_mb"], 2),
+            compression_ratio=round(result["compression_ratio"], 2),
+            source_ply=rel_source,
+        )
+    elif result["skipped"]:
+        outcome["status"] = "skipped"
+        outcome["reason"] = result["reason"]
+        append_log(
+            job_id,
+            f"web derivative skipped ({result['reason']}); "
+            f"viewer falls back to {rel_source}",
+        )
+        _record_web_derivative_stage(
+            job_id, "skipped", reason=result["reason"], fallback_ply=rel_source
+        )
+    else:
+        outcome["status"] = "failed"
+        outcome["reason"] = result["error"]
+        logger.warning("web derivative failed (non-fatal): %s", result["error"])
+        append_log(
+            job_id,
+            f"web derivative failed (non-fatal): {result['error']}; "
+            f"viewer falls back to {rel_source}",
+        )
+        _record_web_derivative_stage(
+            job_id, "failed", reason=result["error"], fallback_ply=rel_source
+        )
+
+    _write_web_manifest(web_dir, output_dir, job_id, outcome, result)
+    return outcome
+
+
+def _write_web_manifest(
+    web_dir: Path,
+    output_dir: Path,
+    job_id: str,
+    outcome: dict[str, Any],
+    result: dict[str, Any] | None,
+) -> None:
+    """Write ``web/manifest.json`` -- the authoritative, durable record of the
+    web derivative that the scenes/splat API can read directly (independent of
+    the job JSON)."""
+    web_splat_rel = None
+    if outcome.get("web_splat_path"):
+        try:
+            web_splat_rel = str(Path(outcome["web_splat_path"]).relative_to(output_dir))
+        except ValueError:
+            web_splat_rel = outcome["web_splat_path"]
+
+    manifest = {
+        "schema": "vitrine.web_derivative/1",
+        "generated_at": time.time(),
+        "job_id": job_id,
+        "status": outcome["status"],
+        "reason": outcome.get("reason"),
+        "source_ply": outcome.get("fallback_ply"),
+        "source_sha256": outcome.get("source_sha256"),
+        "source_sha256_stable": outcome.get("source_sha256_stable"),
+        # The viewer discovers the .ksplat here; when absent it loads the .ply.
+        "ksplat_path": f"web/{_WEB_KSPLAT_NAME}" if outcome["status"] == "ready" else None,
+        "web_splat_path": web_splat_rel,
+        "fallback_ply": outcome.get("fallback_ply"),
+        "viewer": {
+            "library": "@mkkellogg/gaussian-splats-3d",
+            "min_version": "0.4.6",
+            "accepts": [".ksplat", ".ply", ".splat"],
+        },
+    }
+    if result:
+        manifest["splat_count"] = result.get("splat_count")
+        manifest["output_size_mb"] = round(result.get("output_size_mb", 0.0), 2)
+        manifest["input_size_mb"] = round(result.get("input_size_mb", 0.0), 2)
+        manifest["compression_ratio"] = round(result.get("compression_ratio", 1.0), 2)
+        manifest["duration_seconds"] = round(result.get("duration", 0.0), 2)
+
+    try:
+        (web_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    except OSError as exc:
+        logger.warning("Failed to write web derivative manifest: %s", exc)
+
+
 def complete_job(job_id: str, success: bool = True, error: str = "") -> bool:
     """Mark the entire job as completed or failed.
 
-    If successful, creates a downloadable ZIP archive.
+    If successful, generates the web splat derivative (non-fatal) then creates a
+    downloadable ZIP archive.
     """
     from web.job_manager import get_job, update_job, append_log, JobState
 
@@ -306,6 +606,14 @@ def complete_job(job_id: str, success: bool = True, error: str = "") -> bool:
         return False
 
     if success:
+        # Additive, non-fatal: emit output/<id>/web/scene.ksplat before archiving
+        # so the web derivative is included in the result zip.  Never fails the job.
+        try:
+            generate_web_derivative(job_id)
+        except Exception as exc:  # noqa: BLE001 - derivative must never fail the job
+            logger.warning("web derivative stage errored (non-fatal): %s", exc)
+            append_log(job_id, f"web derivative stage errored (non-fatal): {exc}")
+
         archive_path = _create_result_archive(job_id, job.output_dir)
         update_job(
             job_id,

@@ -1,186 +1,326 @@
 <!DOCTYPE html>
-<html lang="en" class="h-full">
+<!--
+  SPDX-FileCopyrightText: 2026 LichtFeld Studio Authors
+  SPDX-License-Identifier: GPL-3.0-or-later
+
+  Job 3D viewer. Two asset tracks selected by availability:
+    * Splat -> embeds /viewer_splat/<job_id> (vendored gaussian-splats-3d).
+    * Mesh  -> vendored <model-viewer> on /mesh/<job_id> (GLB).
+
+  ALL assets are same-origin from /static/vendor/ — no third-party CDN scripts,
+  stylesheets, or web fonts. Runs behind the loopback SSH tunnel with zero
+  external egress (self-contained CSS, vendored model-viewer).
+-->
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>3D Scene -- {{ filename }}</title>
-  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: { extend: { colors: { lf: {
-        bg: '#0f1117', surface: '#1a1d27', border: '#2a2d3a',
-        accent: '#6366f1', 'accent-light': '#818cf8',
-        text: '#e2e8f0', muted: '#94a3b8',
-        success: '#22c55e'
-      }}}}
-    }
-  </script>
+  <!-- Locally vendored model-viewer (self-contained ESM, bundles its own three). -->
+  <script type="module" src="/static/vendor/model-viewer/model-viewer.min.js"></script>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
-    body { font-family: 'Inter', sans-serif; }
-    model-viewer {
-      width: 100%;
-      height: 100%;
-      --poster-color: #0f1117;
+    :root {
+      --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a;
+      --accent: #6366f1; --accent-light: #818cf8;
+      --text: #e2e8f0; --muted: #94a3b8; --success: #22c55e;
     }
-    model-viewer::part(default-progress-bar) { background: #6366f1; }
-    .preview-thumb { transition: all 0.2s; }
-    .preview-thumb:hover { transform: scale(1.05); box-shadow: 0 0 0 2px #6366f1; }
-    .preview-thumb.active { box-shadow: 0 0 0 2px #6366f1; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: var(--bg); color: var(--text); overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    a { color: inherit; text-decoration: none; }
+    .app { height: 100%; display: flex; flex-direction: column; }
+
+    header {
+      flex-shrink: 0; display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .brand h1 { font-size: 14px; font-weight: 600; margin: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 42vw; }
+    .icon-btn { color: var(--muted); display: inline-flex; }
+    .icon-btn:hover { color: var(--text); }
+    .icon-btn svg { width: 20px; height: 20px; }
+    .badge { font-size: 11px; color: var(--muted); background: var(--surface);
+      padding: 2px 8px; border-radius: 6px; }
+
+    .controls { display: flex; align-items: center; gap: 8px; }
+    .btn {
+      appearance: none; font: inherit; font-size: 12px; cursor: pointer;
+      padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--text);
+    }
+    .btn:hover { background: var(--border); }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .btn.primary:hover { background: var(--accent-light); }
+    .btn[hidden] { display: none; }
+
+    .tabs { display: inline-flex; border: 1px solid var(--border); border-radius: 6px;
+      overflow: hidden; background: var(--surface); }
+    .tabs button {
+      appearance: none; border: none; background: transparent; color: var(--muted);
+      font: inherit; font-size: 12px; padding: 6px 14px; cursor: pointer;
+      border-right: 1px solid var(--border);
+    }
+    .tabs button:last-child { border-right: none; }
+    .tabs button:hover:not(:disabled) { color: var(--text); }
+    .tabs button.active { background: var(--accent); color: #fff; }
+    .tabs button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+    .stage { flex: 1; position: relative; min-height: 0; }
+    .panel { position: absolute; inset: 0; }
+    .panel[hidden] { display: none; }
+
+    #splat-frame { width: 100%; height: 100%; border: 0; display: block; background: var(--bg); }
+    model-viewer { width: 100%; height: 100%; --poster-color: var(--bg); }
+    model-viewer::part(default-progress-bar) { background: var(--accent); }
+
+    .info-chip {
+      position: absolute; top: 12px; right: 12px; z-index: 3; font-size: 11px;
+      color: var(--muted); background: rgba(26, 29, 39, 0.85); backdrop-filter: blur(6px);
+      border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px;
+    }
+    .poster { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: var(--bg); }
+    .poster .col { text-align: center; }
+    .spinner { width: 40px; height: 40px; border-radius: 50%; margin: 0 auto 12px;
+      border: 2px solid var(--accent); border-top-color: transparent; animation: spin 0.9s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .poster p { margin: 0; font-size: 13px; color: var(--muted); }
+
+    .preview-strip { flex-shrink: 0; border-top: 1px solid var(--border);
+      background: var(--surface); padding: 10px 14px; }
+    .preview-strip[hidden] { display: none; }
+    .preview-list { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+    .preview-thumb { flex-shrink: 0; cursor: pointer; border-radius: 6px; overflow: hidden;
+      border: 1px solid var(--border); transition: transform 0.15s, box-shadow 0.15s; }
+    .preview-thumb:hover { transform: scale(1.05); box-shadow: 0 0 0 2px var(--accent); }
+    .preview-thumb img { height: 64px; width: auto; display: block; object-fit: cover; }
+
+    .lightbox { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,0.8);
+      display: none; align-items: center; justify-content: center; cursor: pointer; }
+    .lightbox.open { display: flex; }
+    .lightbox img { max-width: 90vw; max-height: 90vh; object-fit: contain;
+      border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,0.6); }
+    .lightbox .close { position: absolute; top: 14px; right: 18px; color: rgba(255,255,255,0.85);
+      font-size: 28px; background: none; border: none; cursor: pointer; }
   </style>
 </head>
-<body class="h-full bg-lf-bg text-lf-text overflow-hidden">
-  <div class="h-full flex flex-col">
-    <!-- Header -->
-    <header class="border-b border-lf-border px-6 py-3 flex items-center justify-between flex-shrink-0">
-      <div class="flex items-center gap-3">
-        <a href="/" class="text-lf-muted hover:text-lf-text transition">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<body>
+  <div class="app">
+    <header>
+      <div class="brand">
+        <a href="/" class="icon-btn" title="Back">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
           </svg>
         </a>
-        <div class="w-7 h-7 rounded bg-lf-accent flex items-center justify-center">
-          <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-8 4.5M20 7v10l-8 4.5M20 7L12 2.5 4 7m8 4.5L4 7m8 4.5V17m8-9.5v10l-8 4.5M4 7v10l8 4.5"/>
-          </svg>
-        </div>
-        <h1 class="text-sm font-semibold">{{ filename }}</h1>
-        <span id="mesh-info" class="text-xs text-lf-muted bg-lf-surface px-2 py-0.5 rounded"></span>
+        <h1 title="{{ filename }}">{{ filename }}</h1>
+        <span id="asset-info" class="badge"></span>
       </div>
-      <div class="flex items-center gap-2">
-        <button onclick="resetCamera()" class="px-3 py-1.5 text-xs bg-lf-surface border border-lf-border rounded hover:bg-lf-border transition" title="Reset camera">Reset</button>
-        <button onclick="toggleWireframe()" id="wire-btn" class="px-3 py-1.5 text-xs bg-lf-surface border border-lf-border rounded hover:bg-lf-border transition" title="Toggle wireframe">Wireframe</button>
-        <a href="/download/{{ job_id }}" class="px-3 py-1.5 text-xs bg-lf-accent text-white rounded hover:bg-lf-accent-light transition">Download ZIP</a>
+      <div class="controls">
+        <div class="tabs" role="group" aria-label="Asset type">
+          <button id="tab-splat" type="button" data-tab="splat">Splat</button>
+          <button id="tab-mesh" type="button" data-tab="mesh">Mesh</button>
+        </div>
+        <button id="btn-reset" class="btn" onclick="resetCamera()" title="Reset camera" hidden>Reset</button>
+        <a href="/download/{{ job_id }}" class="btn primary">Download ZIP</a>
       </div>
     </header>
 
-    <!-- Main content: 3D viewer + preview strip -->
-    <div class="flex-1 flex flex-col min-h-0">
-      <!-- 3D Viewer -->
-      <div class="flex-1 relative">
-        <model-viewer
-          id="viewer"
-          src="/mesh/{{ job_id }}"
-          alt="3D reconstruction of {{ filename }}"
-          camera-controls
-          auto-rotate
-          auto-rotate-delay="3000"
-          rotation-per-second="15deg"
-          shadow-intensity="0.8"
-          shadow-softness="0.5"
-          environment-image="neutral"
-          exposure="1.0"
-          tone-mapping="commerce"
-          loading="eager"
-          reveal="auto"
-          interpolation-decay="100"
-          min-camera-orbit="auto auto 0.5m"
-          touch-action="pan-y"
-        >
-          <!-- Loading indicator -->
-          <div slot="poster" class="absolute inset-0 flex items-center justify-center bg-lf-bg">
-            <div class="text-center">
-              <div class="w-10 h-10 border-2 border-lf-accent border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
-              <p class="text-sm text-lf-muted">Loading 3D scene...</p>
+    <main>
+      <div class="stage">
+        <!-- Splat panel: iframe created on demand so its WebGL context/workers
+             are torn down whenever the tab is left (no leak across open/close). -->
+        <div id="splat-panel" class="panel" hidden></div>
+
+        <!-- Mesh panel: single vendored model-viewer element. -->
+        <div id="mesh-panel" class="panel" hidden>
+          <model-viewer
+            id="mv"
+            alt="3D reconstruction of {{ filename }}"
+            camera-controls
+            auto-rotate
+            auto-rotate-delay="3000"
+            rotation-per-second="15deg"
+            shadow-intensity="0.8"
+            shadow-softness="0.5"
+            environment-image="neutral"
+            exposure="1.0"
+            tone-mapping="commerce"
+            loading="eager"
+            reveal="auto"
+            interpolation-decay="100"
+            min-camera-orbit="auto auto 0.5m"
+            touch-action="pan-y"
+          >
+            <div slot="poster" class="poster">
+              <div class="col">
+                <div class="spinner"></div>
+                <p>Loading 3D mesh…</p>
+              </div>
             </div>
-          </div>
-          <!-- Progress bar -->
-          <div slot="progress-bar" class="absolute bottom-0 left-0 right-0 h-1 bg-lf-surface">
-            <div class="h-full bg-lf-accent transition-all" id="progress"></div>
-          </div>
-        </model-viewer>
+          </model-viewer>
+          <div class="info-chip">Drag to orbit, scroll to zoom</div>
+        </div>
 
-        <!-- Floating info panel -->
-        <div class="absolute top-3 right-3 bg-lf-surface/90 backdrop-blur border border-lf-border rounded-lg px-3 py-2 text-xs text-lf-muted">
-          <div id="camera-info">Drag to orbit, scroll to zoom</div>
+        <!-- Shown until an asset track is chosen. -->
+        <div id="stage-poster" class="poster">
+          <div class="col">
+            <div class="spinner"></div>
+            <p>Locating scene assets…</p>
+          </div>
         </div>
       </div>
 
-      <!-- Preview image strip -->
-      <div id="preview-strip" class="border-t border-lf-border bg-lf-surface px-4 py-3 flex-shrink-0 hidden">
-        <div class="flex gap-2 overflow-x-auto scrollbar-thin pb-1" id="preview-list">
-          <!-- Populated by JS -->
-        </div>
+      <div id="preview-strip" class="preview-strip" hidden>
+        <div id="preview-list" class="preview-list"></div>
       </div>
-    </div>
+    </main>
+  </div>
 
-    <!-- Lightbox overlay for preview images -->
-    <div id="lightbox" class="fixed inset-0 bg-black/80 z-50 hidden items-center justify-center cursor-pointer" onclick="closeLightbox()">
-      <img id="lightbox-img" class="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl" src="" alt="Preview">
-      <button class="absolute top-4 right-4 text-white/80 hover:text-white text-2xl">&times;</button>
-    </div>
+  <div id="lightbox" class="lightbox" onclick="closeLightbox()">
+    <img id="lightbox-img" src="" alt="Preview">
+    <button class="close" aria-label="Close">&times;</button>
   </div>
 
   <script>
-    const viewer = document.querySelector('#viewer');
     const jobId = '{{ job_id }}';
+    const splatPanel = document.getElementById('splat-panel');
+    const meshPanel = document.getElementById('mesh-panel');
+    const stagePoster = document.getElementById('stage-poster');
+    const tabSplat = document.getElementById('tab-splat');
+    const tabMesh = document.getElementById('tab-mesh');
+    const btnReset = document.getElementById('btn-reset');
+    const assetInfo = document.getElementById('asset-info');
+    const mv = document.getElementById('mv');
 
-    // Progress tracking
-    viewer.addEventListener('progress', (e) => {
-      document.getElementById('progress').style.width = `${e.detail.totalProgress * 100}%`;
-    });
+    let current = null;            // 'splat' | 'mesh'
+    let splatViewerUrl = null;
+    let meshAvailable = false;
+    let splatAvailable = false;
 
-    // Show mesh info when loaded
-    viewer.addEventListener('load', () => {
-      document.getElementById('progress').style.display = 'none';
-      // model-viewer doesn't expose vertex count, but we can show it loaded
-      document.getElementById('mesh-info').textContent = 'Loaded';
-    });
-
-    // Reset camera
-    function resetCamera() {
-      viewer.cameraOrbit = 'auto auto auto';
-      viewer.cameraTarget = 'auto auto auto';
-      viewer.fieldOfView = 'auto';
+    // ---- splat iframe lifecycle (deterministic WebGL teardown on leave) -----
+    function teardownSplatFrame() {
+      const f = document.getElementById('splat-frame');
+      if (!f) return;
+      try { if (f.contentWindow && f.contentWindow.__disposeSplatViewer) f.contentWindow.__disposeSplatViewer(); } catch (_) {}
+      try { f.src = 'about:blank'; } catch (_) {}
+      f.remove();
+    }
+    function buildSplatFrame() {
+      teardownSplatFrame();
+      const f = document.createElement('iframe');
+      f.id = 'splat-frame';
+      f.title = 'Gaussian splat viewer';
+      f.src = splatViewerUrl || ('/viewer_splat/' + jobId);
+      f.allow = 'xr-spatial-tracking; fullscreen';
+      splatPanel.appendChild(f);
     }
 
-    // Wireframe toggle (via custom CSS on model-viewer)
-    let wireframe = false;
-    function toggleWireframe() {
-      wireframe = !wireframe;
-      const btn = document.getElementById('wire-btn');
-      if (wireframe) {
-        viewer.style.setProperty('--poster-color', '#1a1d27');
-        btn.classList.add('bg-lf-accent', 'text-white', 'border-lf-accent');
+    function switchTab(name) {
+      if (name === current) return;
+      // Leave current.
+      if (current === 'splat') { teardownSplatFrame(); splatPanel.hidden = true; }
+      if (current === 'mesh') { meshPanel.hidden = true; }
+      // Enter new.
+      current = name;
+      tabSplat.classList.toggle('active', name === 'splat');
+      tabMesh.classList.toggle('active', name === 'mesh');
+      stagePoster.hidden = true;
+      if (name === 'splat') {
+        splatPanel.hidden = false;
+        buildSplatFrame();
+        btnReset.hidden = true;
       } else {
-        btn.classList.remove('bg-lf-accent', 'text-white', 'border-lf-accent');
+        meshPanel.hidden = false;
+        if (!mv.getAttribute('src')) mv.setAttribute('src', '/mesh/' + jobId);
+        btnReset.hidden = false;
       }
     }
 
-    // Load preview images
+    tabSplat.addEventListener('click', () => { if (!tabSplat.disabled) switchTab('splat'); });
+    tabMesh.addEventListener('click', () => { if (!tabMesh.disabled) switchTab('mesh'); });
+
+    // ---- model-viewer wiring ------------------------------------------------
+    mv.addEventListener('load', () => { assetInfo.textContent = 'Mesh loaded'; });
+    mv.addEventListener('error', () => { if (current === 'mesh') assetInfo.textContent = 'Mesh unavailable'; });
+    function resetCamera() {
+      mv.cameraOrbit = 'auto auto auto';
+      mv.cameraTarget = 'auto auto auto';
+      mv.fieldOfView = 'auto';
+    }
+    window.resetCamera = resetCamera;
+
+    // ---- asset detection + default tab --------------------------------------
+    async function detectAssets() {
+      try {
+        const r = await fetch(`/api/scenes/${jobId}/splat`);
+        if (r.ok) { const j = await r.json(); splatAvailable = !!j.available; splatViewerUrl = j.viewer_url || null; }
+      } catch (_) {}
+      try {
+        const r = await fetch(`/mesh/${jobId}`, { method: 'HEAD' });
+        meshAvailable = r.ok;
+      } catch (_) {}
+
+      tabSplat.disabled = !splatAvailable;
+      tabMesh.disabled = !meshAvailable;
+
+      const bits = [];
+      if (splatAvailable) bits.push('splat');
+      if (meshAvailable) bits.push('mesh');
+      assetInfo.textContent = bits.length ? bits.join(' + ') + ' available' : '';
+
+      if (meshAvailable && !splatAvailable) {
+        switchTab('mesh');
+      } else if (splatAvailable) {
+        switchTab('splat');
+      } else {
+        // Nothing yet: keep the splat tab (its embedded page explains status).
+        tabSplat.disabled = false;
+        switchTab('splat');
+      }
+    }
+
+    // ---- preview strip: consume the previews API's own `url` (fall back to
+    //      building from `path`); the prior code read an undefined field. ----
     fetch(`/api/job/${jobId}/previews`)
-      .then(r => r.json())
-      .then(previews => {
-        if (!previews || previews.length === 0) return;
+      .then((r) => r.json())
+      .then((previews) => {
+        if (!previews || !previews.length) return;
         const strip = document.getElementById('preview-strip');
         const list = document.getElementById('preview-list');
-        strip.classList.remove('hidden');
-
-        previews.forEach(p => {
-          const url = `/api/job/${jobId}/file/${p.relative_path}`;
+        strip.hidden = false;
+        previews.forEach((p) => {
+          const url = p.url || `/api/job/${jobId}/file/${p.path}`;
+          const label = p.path || p.stage || '';
           const div = document.createElement('div');
-          div.className = 'preview-thumb flex-shrink-0 cursor-pointer rounded-md overflow-hidden border border-lf-border';
-          div.innerHTML = `<img src="${url}" alt="${p.stage}" class="h-16 w-auto object-cover" loading="lazy" title="${p.relative_path}">`;
-          div.onclick = () => openLightbox(url);
+          div.className = 'preview-thumb';
+          const img = document.createElement('img');
+          img.src = url; img.alt = p.stage || 'preview'; img.loading = 'lazy'; img.title = label;
+          div.appendChild(img);
+          div.addEventListener('click', () => openLightbox(url));
           list.appendChild(div);
         });
       })
       .catch(() => {});
 
-    // Lightbox
+    // ---- lightbox -----------------------------------------------------------
     function openLightbox(url) {
       document.getElementById('lightbox-img').src = url;
-      document.getElementById('lightbox').classList.remove('hidden');
-      document.getElementById('lightbox').classList.add('flex');
+      document.getElementById('lightbox').classList.add('open');
     }
     function closeLightbox() {
-      document.getElementById('lightbox').classList.add('hidden');
-      document.getElementById('lightbox').classList.remove('flex');
+      document.getElementById('lightbox').classList.remove('open');
     }
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') closeLightbox();
-    });
+    window.openLightbox = openLightbox;
+    window.closeLightbox = closeLightbox;
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLightbox(); });
+
+    detectAssets();
   </script>
 </body>
 </html>

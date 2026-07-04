@@ -36,10 +36,13 @@ TRELLIS_REQ=/comfyui/custom_nodes/ComfyUI-TRELLIS2/requirements.txt
 # 1c) ComfyUI-TRELLIS2 CUDA extensions + runtime deps (verified end-to-end
 #     2026-06-19: produced a GLB from a single image). The node's comfy_env/pixi
 #     "one-click install" is bypassed (we run in the main env), so install the
-#     CUDA wheels directly from PozzettiAndrea's prebuilt index — these are the
-#     EXACT cu130/torch2.11/cp312 builds matching this image (NO compilation).
-#     If the image's torch/CUDA/python changes, update the tag in $CW below
-#     (browse https://pozzettiandrea.github.io/cuda-wheels/v2/<pkg>/).
+#     CUDA wheels directly from PozzettiAndrea's prebuilt index — cu130/torch2.11/
+#     cp312 builds (NO compilation on the fast path). NOTE: the image's torch has
+#     moved to 2.12.x, so the torch2.11 drtk wheel no longer ABI-matches — the
+#     1c-fix guard below rebuilds drtk from source when that happens. If you bump
+#     the tag to a torch2.12 build here (browse
+#     https://pozzettiandrea.github.io/cuda-wheels/v2/<pkg>/), the guard becomes a
+#     no-op. The other extensions (cumesh_vb/flex_gemm/…) still load under 2.12.
 CW="https://github.com/PozzettiAndrea/cuda-wheels/releases/download"
 TAG="cu130torch2.11-cp312-cp312-manylinux_2_34_x86_64.manylinux_2_35_x86_64.whl"
 TAG35="cu130torch2.11-cp312-cp312-manylinux_2_35_x86_64.whl"
@@ -49,6 +52,25 @@ $PY -m pip install --break-system-packages -q --no-deps \
   "$CW/flex_gemm_vb-latest/flex_gemm_vb-1.0.0%2B$TAG" \
   "$CW/flex_gemm_ap-latest/flex_gemm_ap-1.0.0%2B$TAG" \
   "$CW/drtk-latest/drtk-0.1.0%2B$TAG" >/dev/null 2>&1 || true
+# 1c-fix) drtk torch-ABI guard. The prebuilt drtk wheel above is pinned to
+#     torch2.11 ($TAG), but this image's torch has since moved to 2.12.x — under
+#     which the wheel raises `undefined symbol: _ZNR5torch7Library4_defE...` at
+#     import, killing Trellis2RasterizePBR and blocking ALL PBR texturing (the
+#     shape stage still works; only the texture bake dies). Self-heal: if drtk
+#     doesn't import, rebuild it from source against the *installed* torch. The
+#     torch/nvcc CUDA-version gate is neutralised (nvcc 12.8 cubin is
+#     forward-compatible with the CUDA 13 runtime torch links) — validated E2E
+#     2026-07-02: produced a 4096 PBR-textured GLB. Idempotent (no-op once OK).
+if ! $PY -c "import drtk; from drtk.interpolate import interpolate" >/dev/null 2>&1; then
+  echo "[comfyui-entrypoint] drtk ABI mismatch vs installed torch — rebuilding drtk from source ..."
+  DRTK_PATCH=/tmp/drtk_abi_patch; mkdir -p "$DRTK_PATCH"
+  printf 'try:\n import torch.utils.cpp_extension as _c\n _c._check_cuda_version=lambda *a,**k:None\nexcept Exception:\n pass\n' > "$DRTK_PATCH/sitecustomize.py"
+  PYTHONPATH="$DRTK_PATCH:$PYTHONPATH" TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-8.9}" \
+    $PY -m pip install --break-system-packages -q --force-reinstall --no-build-isolation --no-deps \
+    "git+https://github.com/facebookresearch/drtk.git" >/dev/null 2>&1 || true
+  $PY -c "import drtk; from drtk.interpolate import interpolate; print('[comfyui-entrypoint] drtk rebuilt from source OK')" 2>/dev/null \
+    || echo "[comfyui-entrypoint] WARNING: drtk still unavailable — TRELLIS.2 PBR texturing will fall back to untextured geometry"
+fi
 # Pure-python runtime deps the TRELLIS pipeline imports (utils3d needs --no-deps
 # to avoid a resolver conflict; the rest install clean).
 $PY -m pip install --break-system-packages -q easydict igraph xatlas zstandard >/dev/null 2>&1 || true

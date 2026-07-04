@@ -17,6 +17,39 @@ COPY vendor/lichtfeld-studio /src/vendor/lichtfeld-studio
 COPY lf_build2.sh lf_stage.sh /src/
 RUN bash /src/lf_build2.sh && bash /src/lf_stage.sh
 
+# ---------------------------------------------------------------------------
+# STAGE spa-builder: compile the Vitrine-owned ArchiveSpace SPA (Track 2 of the
+# web consolidation). Gated by ARG BUILD_SPA=1: when enabled it runs a
+# reproducible `npm ci && npm run build` (pinned lockfile, zero runtime CDN
+# fetches) in src/web/frontend and emits the static dist that the runtime image
+# bakes into src/web/static/spa/. Node/npm live ONLY in this throwaway stage —
+# they NEVER enter the runtime image, preserving the single-mega-image invariant
+# (ADR-022). When BUILD_SPA=0 (the default) it emits an empty /spa/dist so the
+# runtime COPY is a harmless no-op and Flask transparently serves the legacy
+# Jinja UI. `--offline`-friendly: the only network access is npm's registry
+# during the gated build.
+# ---------------------------------------------------------------------------
+FROM node:20-alpine AS spa-builder
+ARG BUILD_SPA=0
+WORKDIR /spa
+# The whole src/web tree is copied (it always exists in the build context) so the
+# gated build has the frontend package.json + committed lockfile + sources. The
+# frontend/ subdir is present only once Track 2 lands it; with BUILD_SPA=0 its
+# absence is irrelevant because the build command is skipped.
+COPY src/web/ /spa/src/web/
+RUN mkdir -p /spa/dist \
+    && if [ "$BUILD_SPA" = "1" ]; then \
+         set -eux; \
+         cd /spa/src/web/frontend; \
+         npm ci; \
+         npm run build; \
+         rm -rf /spa/dist; \
+         cp -r dist /spa/dist; \
+       else \
+         echo "BUILD_SPA=0 — skipping SPA build; Flask serves the legacy Jinja UI"; \
+         touch /spa/dist/.keep; \
+       fi
+
 FROM nvidia/cuda:12.8.1-devel-ubuntu24.04 AS base
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -209,6 +242,7 @@ RUN cd /opt/comfyui/custom_nodes && \
 RUN pip3 install --break-system-packages --ignore-installed \
         trimesh xatlas pymeshfix fast-simplification scikit-image \
         pillow piexif av yt-dlp huggingface_hub requests aiohttp flask sqlalchemy \
+        zipstream-ng pynvml \
         filelock tqdm pyyaml blake3 kornia spandrel einops \
         plyfile numpy scipy opencv-python-headless \
         segment-anything psutil gsplat pytest \
@@ -250,6 +284,16 @@ RUN test -f /opt/sam3-repo/sam3/assets/bpe_simple_vocab_16e6.txt.gz && \
     echo "SAM3 BPE vocab OK" || \
     echo "WARNING: SAM3 BPE vocab not found at /opt/sam3-repo/sam3/assets/bpe_simple_vocab_16e6.txt.gz"
 
+# Reconcile numpy/scipy AFTER SAM3. SAM3 pins numpy<2, which leaves the image with
+# numpy 1.26 + a modern scipy whose wheel references np.long (removed in numpy>=1.24)
+# -> `import scipy.spatial` crashes at runtime (breaks select_frames/reconstruct).
+# Upgrading scipy pulls a numpy>=2 wheel; this pairing (numpy 2.x + scipy>=1.15 +
+# matplotlib for render_previews depth colormaps) was validated end-to-end on
+# rawcapdev 2026-07-02 (decode->select->reconstruct->train->render->segment), and
+# SAM3's numpy<2 pin is advisory & verified-tolerant of numpy 2.x here. Proper
+# long-term isolation is the per-tool venv (ADR-022 P2 / [[web]] follow-up).
+RUN pip3 install --break-system-packages -U "scipy>=1.15" matplotlib
+
 # Set SAM3 BPE path environment variable so the segmentor can find it
 ENV SAM3_BPE_PATH="/opt/sam3-repo/sam3/assets/bpe_simple_vocab_16e6.txt.gz"
 
@@ -266,6 +310,14 @@ RUN ln -sf /opt/gaussian-toolkit/src/pipeline /opt/pipeline && \
 # ---------------------------------------------------------------------------
 # Web interface from the gaussian-toolkit repo (cloned in Phase 5)
 RUN ln -sf /opt/gaussian-toolkit/src/web /opt/web-interface
+
+# Bake the compiled ArchiveSpace SPA (from the gated spa-builder stage) into the
+# web static tree so Flask serves it for client-side routes (/library, /create,
+# /scenes/<id>, /pipeline, /viewer). With BUILD_SPA=0 (default) this copies an
+# empty dir — a no-op — and Flask serves the legacy Jinja UI instead. No node/npm
+# binary ever lands in the runtime image (the SPA is pre-built in the throwaway
+# node:20 stage), so the single-mega-image invariant (ADR-022) is preserved.
+COPY --from=spa-builder /spa/dist/ /opt/gaussian-toolkit/src/web/static/spa/
 
 # ---------------------------------------------------------------------------
 # PHASE 11: Model directory structure

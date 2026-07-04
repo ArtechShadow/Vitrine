@@ -16,6 +16,15 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
       - CUDA_HOME=/usr/local/cuda
       - DISPLAY=:1
+      # Web service bind address INSIDE the container (src/web/app.py). Defaults
+      # to 127.0.0.1 (loopback-only) per ADR-022 D3 ("Nothing on 0.0.0.0") — the
+      # ADR-compliant, IT-signable posture: the web service is reached ONLY via
+      # `ssh -N -L 7860:localhost:7860`. Cross-container access by docker-network
+      # name (gaussian-toolkit:7860 from sibling containers / agentbox over
+      # v2g-net / visionclaw_network) requires an EXPLICIT opt-in — set
+      # LFS_WEB_HOST=0.0.0.0 in your .env. Even then the LAN cannot reach it: the
+      # host publish above is pinned to 127.0.0.1:7860 (PRD R3). Secure by default.
+      - LFS_WEB_HOST=${LFS_WEB_HOST:-127.0.0.1}
       - HF_TOKEN=${HF_TOKEN}
       - HF_HOME=/opt/hf-cache
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
@@ -57,7 +66,11 @@ services:
     shm_size: "64g"
 
     ports:
-      - "7860:7860"    # Web interface (Flask)
+      # ADR-022 / PRD R3: the web host-publish is PINNED to loopback. External
+      # machines on the LAN cannot reach it (`curl http://<rig-ip>:7860` fails);
+      # the only external path is an SSH tunnel: `ssh -N -L 7860:localhost:7860`.
+      # This loopback publish is the LAN boundary regardless of LFS_WEB_HOST below.
+      - "127.0.0.1:7860:7860"  # Web interface (Flask) — loopback-only host publish
       - "7681:7681"    # Web terminal (ttyd)
       - "8188:8188"    # ComfyUI
       - "45677:45677"  # LichtFeld Studio MCP
@@ -102,6 +115,15 @@ services:
       # Live pipeline source (override baked-in code for dev iteration)
       - ./src/pipeline:/opt/gaussian-toolkit/src/pipeline
       - ./src/web:/opt/gaussian-toolkit/src/web
+      # Keep the IMAGE-baked SPA (Dockerfile spa-builder → static/spa, only when
+      # built with BUILD_SPA=1) visible even though the whole src/web tree above
+      # is bind-mounted for dev iteration. This anonymous volume re-exposes the
+      # baked static/spa from the image over the host mount (the host checkout has
+      # no dist/). GOTCHA: the volume is initialised once; after rebuilding the
+      # image with a new SPA, run `docker compose down -v` (or `docker volume rm`)
+      # to refresh it. With BUILD_SPA=0 the baked dir is empty and Flask serves
+      # the legacy Jinja UI, so this line is a harmless no-op.
+      - /opt/gaussian-toolkit/src/web/static/spa
       - ./CLAUDE_CONTAINER.md:/opt/gaussian-toolkit/CLAUDE.md:ro
       # Live entrypoint — symlink-based model staging (NEVER copies the ~216G
       # tree into /opt/models). Bind-mounted so the fix applies without rebuilding
