@@ -28,6 +28,12 @@ services:
       - HF_TOKEN=${HF_TOKEN}
       - HF_HOME=/opt/hf-cache
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Internal-Claude enablement gate (ADR-022 D3 / ADR-024). Default 0 = the
+      # in-container Claude control surface is OFF: the ttyd terminal is not
+      # started and the only operator I/O is the web upload + runtime-feedback
+      # panel on :7860 (over the SSH tunnel). Set to 1 at setup to enable the
+      # internal Claude intelligence (terminal + full pipeline/model/code control).
+      - VITRINE_CLAUDE_ENABLED=${VITRINE_CLAUDE_ENABLED:-0}
       - SAM3_BPE_PATH=/opt/sam3-repo/sam3/assets/bpe_simple_vocab_16e6.txt.gz
       - MILO_CONTAINER=milo
       # Bulk capture ingestion (drive_ingestor.py). The remote is an rclone
@@ -66,15 +72,18 @@ services:
     shm_size: "64g"
 
     ports:
-      # ADR-022 / PRD R3: the web host-publish is PINNED to loopback. External
-      # machines on the LAN cannot reach it (`curl http://<rig-ip>:7860` fails);
-      # the only external path is an SSH tunnel: `ssh -N -L 7860:localhost:7860`.
-      # This loopback publish is the LAN boundary regardless of LFS_WEB_HOST below.
-      - "127.0.0.1:7860:7860"  # Web interface (Flask) — loopback-only host publish
-      - "7681:7681"    # Web terminal (ttyd)
-      - "8188:8188"    # ComfyUI
-      - "45677:45677"  # LichtFeld Studio MCP
-      - "5902:5901"    # VNC (host 5902 — agentbox already publishes host 5901)
+      # ADR-022 / PRD R3: EVERY host publish is pinned to 127.0.0.1. External
+      # machines on the LAN cannot reach any of these; the only external path is
+      # an SSH tunnel (e.g. `ssh -N -L 7860:localhost:7860`). The web upload +
+      # runtime-feedback panel (:7860) is the sole operator surface by default;
+      # the terminal (:7681) is the internal-Claude control surface and only
+      # accepts a connection when VITRINE_CLAUDE_ENABLED=1 (the ttyd process is
+      # not started otherwise — see docker/supervisord.conf + vitrine-terminal.sh).
+      - "127.0.0.1:7860:7860"    # Web interface (Flask) — operator panel, loopback-only
+      - "127.0.0.1:7681:7681"    # Web terminal (ttyd) — internal-Claude surface, gated
+      - "127.0.0.1:8188:8188"    # ComfyUI — internal pipeline surface, loopback-only
+      - "127.0.0.1:45677:45677"  # LichtFeld Studio MCP — internal, loopback-only
+      - "127.0.0.1:5902:5901"    # VNC (host 5902) — debug surface, loopback-only
 
     # Networking (see top-level `networks:`):
     #   v2g-net            — internal pipeline bus: reaches vitrine-comfyui:8188
@@ -129,6 +138,9 @@ services:
       # tree into /opt/models). Bind-mounted so the fix applies without rebuilding
       # the 47G image; iterate the entrypoint without a rebuild.
       - ./docker/entrypoint.sh:/opt/entrypoint.sh:ro
+      # Internal-Claude terminal gate (ADR-024) — bind-mounted so the enablement
+      # policy can be iterated without rebuilding the image.
+      - ./docker/vitrine-terminal.sh:/opt/vitrine-terminal.sh:ro
       # Bulk ingestion scratch (drive_ingestor.py). Active session's raw videos
       # are pulled to /data/raw and the working set (frames, COLMAP, model) to
       # /data/scratch; both are purged after a verified upload. Point these at a

@@ -1,6 +1,6 @@
 # Engineering Log
 
-Development history and key decisions for the Gaussian Toolkit fork of LichtFeld Studio.
+Development history for Vitrine (a standalone project that vendors LichtFeld Studio as a pinned tool; formerly a fork — see ADR-021).
 
 ## 2026-07-02 — First LichtFeld-native E2E on real raw capture (rawcapdev) + build, pipeline, and web fixes
 

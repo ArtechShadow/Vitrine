@@ -1,7 +1,10 @@
-# Vitrine Onboarding (Proposed)
+# Vitrine Onboarding
 
-> **Status: Proposed — not yet built.** Vitrine Onboarding is designed in ADR-015 (2026-06-04). The
-> description below is the intended design; none of this tooling exists in the current codebase.
+> **Status: Implemented (Rust/Axum wizard, onboarding/src/main.rs); binds 127.0.0.1:8088 by default
+> as of ADR-024.** Vitrine Onboarding is designed in ADR-015 (2026-06-04). The wizard binary is real
+> and serves `/`, `/api/health`, and `/api/manifest` today; the fuller schema-driven forms, hardware
+> probe, and OAuth/provisioning flow described below remain design-only — treat the rest of this page
+> as the target design, not fully-shipped behaviour.
 
 Vitrine Onboarding is the user-facing entry point to the Vitrine pipeline. It is a **schema-driven
 web wizard** that takes a user from zero to a fully-provisioned, agent-ready pipeline run — without
@@ -181,4 +184,4 @@ resumed without starting from scratch.
 - `research/decisions/adr-013-ingest-manifest-serial-model-lifecycle.md` — `exhibit.toml` schema, lifecycle, oversight backend.
 - `research/decisions/adr-014-agent-controlled-comfyui-integration.md` — Salad control API, ComfyUI provisioning.
 - [v3 Pipeline Design](architecture/v3-pipeline.md) — `v2g-net` diagram and manifest-to-handoff flow.
-- [Architecture (v3 section)](architecture.md#v3-end-to-end-architecture-proposed) — orchestrator/tool relationship, serial lifecycle.
+- [Architecture (v3 section)](architecture.md#v3-end-to-end-architecture-largely-implemented) — orchestrator/tool relationship, serial lifecycle.

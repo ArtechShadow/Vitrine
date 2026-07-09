@@ -25,6 +25,13 @@ Both converge at `select_frames`.
 
 These supersede convenience shortcuts elsewhere in this file.
 
+### Internal-Claude enablement (ADR-024)
+
+The in-container Claude intelligence — this terminal, and the pipeline's
+auto-launch of Claude Code — runs **only** when `VITRINE_CLAUDE_ENABLED=1`.
+With it unset, the web panel on `:7860` is the only operator I/O; there is no
+in-container Claude orchestration to fall back on.
+
 1. **Vitrine is the product; LichtFeld is a vendored tool.** For 3DGS training,
    pose-opt, densification, scene export, and rendering, call the vendored
    LichtFeld tool via its MCP surface (`AGENTS.md`; bridge at
@@ -55,6 +62,8 @@ These supersede convenience shortcuts elsewhere in this file.
 MUST be built with `INSTALL_COME=1`, the `come` sidecar MUST be running, and you
 MUST **verify `come_extractor.py`'s CLI flags against the released CoMe repo**
 (they were inferred). Otherwise every run silently degrades to the TSDF fallback.
+(master-audit #17 confirms `mesh_method='come'` silently degrades to TSDF when
+the come sidecar/flags aren't validated — verify before relying on CoMe output.)
 
 ## SOTA Modernization Mandate (research → implement → validate → pin → report)
 
@@ -584,7 +593,7 @@ curl -X POST http://localhost:7860/api/job/JOB_ID/complete \
 |------|-------|--------|
 | SAM3 masks | Returns coarse bounding boxes, not per-object silhouettes; `extract_objects` therefore returns the full scene | Open; working path is SAM image crop → TRELLIS.2 |
 | .ksplat production | `make_web_ksplat()` requires Node / npx at runtime; when absent the web viewer falls back to progressive-loading the trained `.ply` directly | Open; Node not pre-installed in the image |
-| Rust onboarding wizard | `vitrine-onboarding` (:8088) still binds `0.0.0.0` (not loopback-restricted) | Open; low priority |
+| Rust onboarding wizard | `vitrine-onboarding` (:8088) still binds `0.0.0.0` (not loopback-restricted) | **Resolved** — now defaults to `127.0.0.1:8088` (ADR-024) |
 
 ### Process management
 

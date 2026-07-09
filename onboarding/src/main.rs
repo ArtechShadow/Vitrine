@@ -434,7 +434,15 @@ async fn main() {
 
     let app = router(state);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 8088));
+    // ADR-022 D3: bind loopback-only by default so the wizard is reachable only
+    // via an SSH tunnel, never the LAN. Override with VITRINE_ONBOARDING_HOST
+    // (e.g. 0.0.0.0) for an explicit container-bus opt-in; even then the host
+    // publish should stay pinned to 127.0.0.1.
+    let bind_host = std::env::var("VITRINE_ONBOARDING_HOST")
+        .unwrap_or_else(|_| "127.0.0.1".to_string());
+    let addr: SocketAddr = format!("{bind_host}:8088")
+        .parse()
+        .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 8088)));
     tracing::info!(
         %addr,
         output_dir = %output_dir.display(),
@@ -444,7 +452,7 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
-        .expect("failed to bind 0.0.0.0:8088");
+        .expect("failed to bind onboarding wizard on :8088");
     axum::serve(listener, app)
         .await
         .expect("server error");

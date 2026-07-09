@@ -45,7 +45,8 @@ Gaussian Toolkit integrates multiple components into a unified 3D Gaussian Splat
 └────────────────┬──────────────────────────────────────┘
                  │ unreal/docker-compose.unreal.yml overlay
 ┌────────────────▼──────────────────────────────────────┐
-│  unreal (GPU 1, optional overlay, not started yet)    │
+│  unreal (GPU 1, optional overlay, off by default;     │
+│  validated 2026-06-21)                                │
 │  vitrine-unreal:5.8 USD scenegraph export + render     │
 │  + unreal-mcp-bridge :9100                             │
 └───────────────────────────────────────────────────────┘
@@ -184,7 +185,8 @@ The pipeline runs as a multi-container stack: the main container, a dedicated ow
 ┌────────────────▼────────────────────────────────────────┐
 │  unreal (GPU 1) — vitrine-unreal:5.8, optional overlay   │
 │  UE 5.8 USD scenegraph export + render (image built;     │
-│  overlay not started yet). + unreal-mcp-bridge :9100     │
+│  overlay validated 2026-06-21, off by default).           │
+│  + unreal-mcp-bridge :9100                                │
 │  Web Remote Control :30010 (primary), UE MCP :8000 (exp) │
 └─────────────────────────────────────────────────────────┘
 ```

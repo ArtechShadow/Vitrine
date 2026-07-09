@@ -49,9 +49,12 @@ Xvfb :1 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset &
 sleep 1
 export DISPLAY=:1
 fluxbox &>/dev/null &
-x11vnc -display :1 -forever -nopw -shared -rfbport 5901 -bg 2>/dev/null || true
+# VNC is a debug surface. Bind it to loopback (-localhost) so that even with a
+# host port publish it is reachable ONLY through an SSH tunnel, never the LAN
+# (ADR-022 D3). The host publish is additionally pinned to 127.0.0.1 in compose.
+x11vnc -display :1 -forever -nopw -localhost -shared -rfbport 5901 -bg 2>/dev/null || true
 
-echo "VNC on port 5901"
+echo "VNC on 127.0.0.1:5901 (loopback-only; reach via ssh -N -L 5901:localhost:5901)"
 
 # Ensure data directories exist
 mkdir -p /data/output /data/input
@@ -79,13 +82,19 @@ chmod 0644 /etc/profile.d/00-home.sh
 # Provide a `claude-login` shortcut and a one-time hint on interactive shells.
 cat > /etc/profile.d/10-claude-login.sh <<'PROFILE'
 # Vitrine: log into Claude Code from the web terminal (no API key needed).
+# Only surfaced when the internal-Claude intelligence is enabled at setup
+# (VITRINE_CLAUDE_ENABLED=1); otherwise the terminal itself is not started.
 claude-login() { command claude --dangerously-skip-permissions "$@"; }
 if [ -n "$BASH_VERSION" ]; then export -f claude-login 2>/dev/null || true; fi
-case "$-" in
-  *i*)
-    printf '\n\033[1;36m● Claude Code\033[0m — log in with your Claude subscription (no API key needed):\n'
-    printf '    run  \033[1;32mclaude-login\033[0m   then type  \033[1;32m/login\033[0m   and accept the bypass-permissions prompt once.\n'
-    printf '    \033[2m(claude-login = claude --dangerously-skip-permissions; the pipeline then auto-runs jobs)\033[0m\n\n'
+case "${VITRINE_CLAUDE_ENABLED:-0}" in
+  1|true|yes|on|True|YES|On)
+    case "$-" in
+      *i*)
+        printf '\n\033[1;36m● Claude Code\033[0m — log in with your Claude subscription (no API key needed):\n'
+        printf '    run  \033[1;32mclaude-login\033[0m   then type  \033[1;32m/login\033[0m   and accept the bypass-permissions prompt once.\n'
+        printf '    \033[2m(claude-login = claude --dangerously-skip-permissions; the pipeline then auto-runs jobs)\033[0m\n\n'
+        ;;
+    esac
     ;;
 esac
 PROFILE
