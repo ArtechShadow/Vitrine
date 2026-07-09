@@ -615,7 +615,7 @@ pgrep -x LichtFeld-Studio          # WRONG — never matches, silently returns n
 
 ### REST API
 
-The web UI at :7860 now includes a file browser, per-run zip download, and 3D splat viewer (PR #6 UX consolidation, ADR-023); it binds 127.0.0.1 by default — set LFS_WEB_HOST only for container-bus access.
+The web UI at :7860 now includes a file browser, per-run zip download, and 3D splat viewer (PR #6 UX consolidation, ADR-023). Security boundary = the **host publish pin** (`127.0.0.1:7860` in compose, ADR-022/024): the LAN never reaches it; operators use `ssh -N -L 7860:localhost:7860`. Inside the container the bind is `0.0.0.0` — REQUIRED for the pinned publish (and the tunnel) to function at all; a container-loopback bind kills the publish (regression fixed 2026-07-09).
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|

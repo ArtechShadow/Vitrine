@@ -2,6 +2,44 @@
 
 Development history for Vitrine (a standalone project that vendors LichtFeld Studio as a pinned tool; formerly a fork — see ADR-021).
 
+## 2026-07-09 (evening) — Security posture APPLIED live + hardening pass + `pipeline objects` CLI
+
+### The live system was still LAN-open — now loopback-everywhere (verified)
+
+The ADR-024 loopback pins existed only in compose; the running `gaussian-toolkit`
+predated them and was publishing ttyd `:7681`, ComfyUI `:8188`, LichtFeld MCP
+`:45677` and passwordless VNC `:5902` on `0.0.0.0`. Containers recreated from
+current config; **`ss -tlnp` now shows every pipeline port
+(7860/7681/8188/8200/45677/5902) on `127.0.0.1` only.** Three new findings
+fixed in the same pass (gap register #11–#13):
+
+- **#11** `run_comfyui.sh` published `:8200` on `0.0.0.0` (no-auth ComfyUI,
+  RCE-class Manager surface) — missed by the register's #9 verdict. Pinned.
+- **#12** the "secure by default" `LFS_WEB_HOST=127.0.0.1` compose default was
+  a **functional regression, not a hardening**: docker-proxy connects to the
+  container's bridge IP, so a container-loopback bind makes the pinned host
+  publish — and the documented SSH tunnel — dead. The boundary is the
+  `host_ip: 127.0.0.1` publish; compose now binds `0.0.0.0` in-container with
+  the rationale documented in compose + `app.py`. Tunnel path live-verified.
+- **#13** live probing the file API found `%00` in `?path=` → 500 (unhandled
+  past the jail); now 400. Traversal probes (plain/encoded/absolute/run-id)
+  all correctly refused; extension allow-list enforced.
+- **#14** defence-in-depth credentials plumbed: `VITRINE_TTYD_CREDENTIAL`
+  (ttyd basic-auth) + `VITRINE_VNC_PASSWORD` (x11vnc), through compose +
+  the mounted `vitrine-terminal.sh`/`entrypoint.sh`. Default = tunnel-only,
+  warned at boot. Caveat: the baked `supervisord.conf` predates the ttyd gate,
+  so the gate + credential activate at the next image rebuild; the loopback
+  publish is the interim control.
+
+### `pipeline objects` — the object arc as a first-class CLI
+
+`python3 -m pipeline.cli objects <job_dir> [--concepts ...] [--skip-segment]`
+runs segment → object_crops → extract_objects → mesh_objects → texture_bake
+on an existing trained run — the committed form of the flow that produced the
+first validated automated objects, without repeating the COLMAP/training
+front-end. Auto-detects the newest model PLY + frames dir; loud failures
+propagate; generator assets are tagged `[generator, PBR verbatim]`.
+
 ## 2026-07-09 — Object pipeline convergence implemented (PRD v4 / ADR-025) + SAM3 root cause FIXED
 
 ### R1 SOLVED: "SAM3 returns boxes" was an HWC/CHW bug in OUR wrapper — one-line fix
