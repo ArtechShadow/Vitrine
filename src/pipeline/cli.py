@@ -40,6 +40,23 @@ def _build_parser() -> argparse.ArgumentParser:
     v2s.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
     v2s.add_argument("--quiet", "-q", action="store_true", help="Suppress progress output")
 
+    # --- objects (ADR-025 object arc on an existing run) ---
+    obj = sub.add_parser(
+        "objects",
+        help="Run the object arc (segment → crops → isolate → generate) on an "
+             "existing trained run directory",
+    )
+    obj.add_argument("job_dir", help="Existing run directory (contains model/ + frames)")
+    obj.add_argument("--config", "-c", help="Path to pipeline config JSON")
+    obj.add_argument("--concepts", nargs="*",
+                     help="SAM3 concepts to segment (default: config list)")
+    obj.add_argument("--frames-dir", help="Frames directory (default: auto-detect)")
+    obj.add_argument("--ply", help="Trained PLY (default: newest under model/)")
+    obj.add_argument("--skip-segment", action="store_true",
+                     help="Reuse existing sam3_masks/ instead of re-running SAM3")
+    obj.add_argument("--verbose", "-v", action="store_true")
+    obj.add_argument("--quiet", "-q", action="store_true")
+
     # --- config ---
     cfg_cmd = sub.add_parser("config", help="Manage pipeline configuration")
     cfg_sub = cfg_cmd.add_subparsers(dest="config_action", required=True)
@@ -234,6 +251,104 @@ def cmd_video2scene(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_objects(args: argparse.Namespace) -> int:
+    """ADR-025 object arc on an existing trained run.
+
+    Runs segment → object_crops → extract_objects → mesh_objects →
+    texture_bake against a run that already has frames + a trained splat, so
+    object generation can be iterated without repeating the multi-hour
+    COLMAP/training front-end. This is the committed form of the flow that
+    produced the first validated automated objects (rawcapdev, 2026-07-09).
+    """
+    _setup_logging(args.verbose, args.quiet)
+
+    config = PipelineConfig.load(args.config) if args.config else PipelineConfig()
+    if args.concepts:
+        config.decompose.sam3_concepts = args.concepts
+
+    job_dir = Path(args.job_dir)
+    if not job_dir.is_dir():
+        print(f"Error: job dir not found: {job_dir}", file=sys.stderr)
+        return 1
+
+    # Trained PLY: explicit flag, else the newest model checkpoint.
+    if args.ply:
+        ply_path = Path(args.ply)
+    else:
+        candidates = sorted(job_dir.glob("model/**/*.ply")) or sorted(
+            job_dir.glob("model/*.ply"))
+        if not candidates:
+            print(f"Error: no trained PLY under {job_dir}/model — pass --ply",
+                  file=sys.stderr)
+            return 1
+        ply_path = candidates[-1]
+
+    # Frames: explicit flag, else the standard candidates in preference order.
+    if args.frames_dir:
+        frames_dir = Path(args.frames_dir)
+    else:
+        frames_dir = next(
+            (d for n in ("frames_selected", "frames_cleaned", "frames", "input")
+             if (d := job_dir / n).is_dir()), None)
+        if frames_dir is None:
+            print(f"Error: no frames directory under {job_dir} — pass --frames-dir",
+                  file=sys.stderr)
+            return 1
+
+    p = PipelineStages(str(job_dir), config=config)
+    print(f"Object arc: {job_dir}\n  ply    = {ply_path}\n  frames = {frames_dir}")
+
+    def _run(name: str, fn, *fargs, fatal: bool = True, **kw):
+        print(f"\n--- {name} ---")
+        result = fn(*fargs, **kw)
+        print(f"  {result.stage}: {'OK' if result.success else 'FAIL'} {result.metrics}")
+        if not result.success:
+            print(f"  Error: {result.error}", file=sys.stderr)
+            if fatal:
+                raise SystemExit(1)
+        return result
+
+    if args.skip_segment:
+        masks_dir = job_dir / "sam3_masks"
+        objects_json = "[]"
+        # Rebuild the object list from the persisted masks + crops manifest if
+        # present; otherwise segment metadata must be re-derived.
+        manifest = job_dir / "object_crops" / "crops.json"
+        if manifest.exists():
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+            objects_json = json.dumps([
+                {"label": c["label"], "object_id": c["object_id"], "mask_pixels": 1}
+                for c in data.get("crops", [])
+            ])
+        elif not masks_dir.exists():
+            print("Error: --skip-segment but no sam3_masks/ to reuse", file=sys.stderr)
+            return 1
+        print("\n--- Segment (skipped — reusing existing masks) ---")
+    else:
+        result = _run("Segment", p.segment, str(ply_path), str(frames_dir))
+        objects_json = result.artifacts.get("objects", "[]")
+
+    result = _run("Object Crops", p.object_crops, str(frames_dir),
+                  objects=objects_json)
+    crops_json = result.artifacts.get("object_crops", "[]")
+
+    result = _run("Extract Objects", p.extract_objects, str(ply_path),
+                  labels=objects_json)
+    object_plys = result.artifacts.get("object_plys", "[]")
+
+    result = _run("Mesh Objects", p.mesh_objects, object_plys, crops=crops_json)
+    meshes_json = result.artifacts.get("meshes", "[]")
+
+    _run("Texture Bake", p.texture_bake, meshes_json, fatal=False)
+
+    meshes = json.loads(meshes_json)
+    print(f"\nObject arc complete: {len(meshes)} asset(s)")
+    for m in meshes:
+        tag = " [generator, PBR verbatim]" if m.get("generator") else ""
+        print(f"  {m.get('label')}: {m.get('mesh')}{tag}")
+    return 0
+
+
 def cmd_config(args: argparse.Namespace) -> int:
     if args.config_action == "show":
         config = PipelineConfig()
@@ -282,6 +397,7 @@ def main(argv: list[str] | None = None) -> int:
 
     dispatch = {
         "video2scene": cmd_video2scene,
+        "objects": cmd_objects,
         "config": cmd_config,
         "status": cmd_status,
     }
