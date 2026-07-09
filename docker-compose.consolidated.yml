@@ -16,15 +16,18 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
       - CUDA_HOME=/usr/local/cuda
       - DISPLAY=:1
-      # Web service bind address INSIDE the container (src/web/app.py). Defaults
-      # to 127.0.0.1 (loopback-only) per ADR-022 D3 ("Nothing on 0.0.0.0") — the
-      # ADR-compliant, IT-signable posture: the web service is reached ONLY via
-      # `ssh -N -L 7860:localhost:7860`. Cross-container access by docker-network
-      # name (gaussian-toolkit:7860 from sibling containers / agentbox over
-      # v2g-net / visionclaw_network) requires an EXPLICIT opt-in — set
-      # LFS_WEB_HOST=0.0.0.0 in your .env. Even then the LAN cannot reach it: the
-      # host publish above is pinned to 127.0.0.1:7860 (PRD R3). Secure by default.
-      - LFS_WEB_HOST=${LFS_WEB_HOST:-127.0.0.1}
+      # Web service bind address INSIDE the container (src/web/app.py).
+      # SECURITY BOUNDARY = the HOST PUBLISH above (host_ip 127.0.0.1, ADR-022
+      # D3 / ADR-024 D1): the LAN can never reach :7860; operators use
+      # `ssh -N -L 7860:localhost:7860`. The in-container bind must be 0.0.0.0
+      # for that publish to function at all — docker-proxy connects to the
+      # container's bridge IP, so a container-loopback bind makes the pinned
+      # publish (and therefore the SSH tunnel) DEAD, not safer (regression
+      # found+fixed 2026-07-09; the container netns is already isolated).
+      # Cross-container access (gaussian-toolkit:7860 over v2g-net /
+      # visionclaw_network) also requires this. Set LFS_WEB_HOST=127.0.0.1
+      # only for a NON-container run of app.py directly on a host.
+      - LFS_WEB_HOST=${LFS_WEB_HOST:-0.0.0.0}
       - HF_TOKEN=${HF_TOKEN}
       - HF_HOME=/opt/hf-cache
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
@@ -34,6 +37,12 @@ services:
       # panel on :7860 (over the SSH tunnel). Set to 1 at setup to enable the
       # internal Claude intelligence (terminal + full pipeline/model/code control).
       - VITRINE_CLAUDE_ENABLED=${VITRINE_CLAUDE_ENABLED:-0}
+      # Defence-in-depth credentials (gap register #5/#6, optional): basic-auth
+      # for the gated ttyd terminal (user:pass) and a password for the VNC debug
+      # surface. Both surfaces are loopback-pinned regardless; these add a second
+      # factor on top of the SSH tunnel. Empty = tunnel-only (warned at boot).
+      - VITRINE_TTYD_CREDENTIAL=${VITRINE_TTYD_CREDENTIAL:-}
+      - VITRINE_VNC_PASSWORD=${VITRINE_VNC_PASSWORD:-}
       - SAM3_BPE_PATH=/opt/sam3-repo/sam3/assets/bpe_simple_vocab_16e6.txt.gz
       - MILO_CONTAINER=milo
       # Bulk capture ingestion (drive_ingestor.py). The remote is an rclone

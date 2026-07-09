@@ -38,8 +38,12 @@ fi
 # comfyui_entrypoint.sh (mounted) repairs the image safetensors metadata and
 # installs the custom-node deps before launching ComfyUI — see that script.
 docker rm -f vitrine-comfyui 2>/dev/null || true
+# Host publish pinned to loopback (ADR-024 D1 posture): ComfyUI has NO auth and
+# a known RCE-class surface (master audit); LAN reach is via ssh -L only.
+# Cross-container access is unaffected (v2g-net service DNS, not the publish).
 docker run -d --name vitrine-comfyui --runtime nvidia --user 0:0 \
-  -e CUDA_VISIBLE_DEVICES="$GPU" -e HF_TOKEN="$HF_TOKEN" -p "${PORT}:8188" \
+  -e CUDA_VISIBLE_DEVICES="$GPU" -e HF_TOKEN="$HF_TOKEN" \
+  -p "127.0.0.1:${PORT}:8188" \
   -v "$COMFY_DIR":/comfyui \
   -v "$SCRIPT_DIR/comfyui_entrypoint.sh":/comfyui_entrypoint.sh:ro \
   -w /comfyui --entrypoint bash \

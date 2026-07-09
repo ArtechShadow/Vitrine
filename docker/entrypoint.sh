@@ -52,9 +52,15 @@ fluxbox &>/dev/null &
 # VNC is a debug surface. Bind it to loopback (-localhost) so that even with a
 # host port publish it is reachable ONLY through an SSH tunnel, never the LAN
 # (ADR-022 D3). The host publish is additionally pinned to 127.0.0.1 in compose.
-x11vnc -display :1 -forever -nopw -localhost -shared -rfbport 5901 -bg 2>/dev/null || true
-
-echo "VNC on 127.0.0.1:5901 (loopback-only; reach via ssh -N -L 5901:localhost:5901)"
+# Defence-in-depth (gap register #5): set VITRINE_VNC_PASSWORD to require a
+# password on top of the tunnel; unset keeps -nopw (tunnel-only protection).
+if [ -n "${VITRINE_VNC_PASSWORD:-}" ]; then
+  x11vnc -display :1 -forever -passwd "${VITRINE_VNC_PASSWORD}" -localhost -shared -rfbport 5901 -bg 2>/dev/null || true
+  echo "VNC on 127.0.0.1:5901 (loopback-only, password-protected; reach via ssh -N -L 5901:localhost:5901)"
+else
+  x11vnc -display :1 -forever -nopw -localhost -shared -rfbport 5901 -bg 2>/dev/null || true
+  echo "VNC on 127.0.0.1:5901 (loopback-only, NO password — set VITRINE_VNC_PASSWORD for defence-in-depth)"
+fi
 
 # Ensure data directories exist
 mkdir -p /data/output /data/input

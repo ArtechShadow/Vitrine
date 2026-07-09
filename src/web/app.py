@@ -1188,14 +1188,13 @@ def create_app() -> Flask:
 if __name__ == "__main__":
     application = create_app()
     port = int(os.environ.get("LFS_WEB_PORT", "7860"))
-    # ADR-022 D3: bind loopback-only BY DEFAULT. The service is reached
-    # externally only via `ssh -N -L 7860:localhost:7860`; it must never be
-    # exposed to the LAN. 0.0.0.0 is available ONLY through an explicit
-    # LFS_WEB_HOST opt-in, documented for the current v2g-net / visionclaw_network
-    # container-to-container topology (so sibling containers and the agentbox can
-    # reach gaussian-toolkit:7860). Even under that opt-in, host publishing stays
-    # pinned to 127.0.0.1:7860 in docker-compose.consolidated.yml, so the LAN
-    # boundary is preserved regardless of the in-container bind address.
+    # ADR-022 D3: bind loopback-only BY DEFAULT — correct for a BARE-HOST run
+    # of this module. IN THE CONTAINER, compose sets LFS_WEB_HOST=0.0.0.0:
+    # docker-proxy connects to the container's bridge IP, so a container-
+    # loopback bind makes the pinned host publish (127.0.0.1:7860) — and with
+    # it the documented `ssh -N -L 7860:localhost:7860` path — dead, not safer
+    # (regression found+fixed 2026-07-09). The LAN boundary lives at the host
+    # publish pin in docker-compose.consolidated.yml, not at this bind.
     host = os.environ.get("LFS_WEB_HOST", "127.0.0.1")
     if host not in ("127.0.0.1", "localhost", "::1"):
         logger.warning(

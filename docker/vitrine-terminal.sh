@@ -21,6 +21,17 @@ set -euo pipefail
 ENABLED="${VITRINE_CLAUDE_ENABLED:-0}"
 case "${ENABLED,,}" in
     1|true|yes|on)
+        # Defence-in-depth beyond the SSH tunnel (gap register #6): when
+        # VITRINE_TTYD_CREDENTIAL=user:pass is set, ttyd requires HTTP basic
+        # auth. Strongly recommended when enabling the terminal — it is the
+        # in-container Claude control surface (root-equivalent).
+        CRED_ARGS=()
+        if [[ -n "${VITRINE_TTYD_CREDENTIAL:-}" ]]; then
+            CRED_ARGS=(--credential "${VITRINE_TTYD_CREDENTIAL}")
+            echo "[vitrine-terminal] basic-auth ENABLED (VITRINE_TTYD_CREDENTIAL)"
+        else
+            echo "[vitrine-terminal] WARNING: no VITRINE_TTYD_CREDENTIAL — terminal protected by the SSH tunnel ONLY"
+        fi
         echo "[vitrine-terminal] VITRINE_CLAUDE_ENABLED=${ENABLED} — starting gated ttyd on 127.0.0.1:7681"
         # --interface 127.0.0.1: bind loopback only (SSH-tunnel reachable, never LAN).
         exec /usr/local/bin/ttyd \
@@ -28,6 +39,7 @@ case "${ENABLED,,}" in
             --port 7681 \
             --writable \
             --uid 1000 --gid 1000 \
+            "${CRED_ARGS[@]}" \
             bash --login
         ;;
     *)
