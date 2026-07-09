@@ -2,6 +2,89 @@
 
 Development history for Vitrine (a standalone project that vendors LichtFeld Studio as a pinned tool; formerly a fork — see ADR-021).
 
+## 2026-07-09 — Object pipeline convergence implemented (PRD v4 / ADR-025) + SAM3 root cause FIXED
+
+### R1 SOLVED: "SAM3 returns boxes" was an HWC/CHW bug in OUR wrapper — one-line fix
+
+The audit's blocker defect F1 is closed, and the root cause was ours, not SAM3's:
+`Sam3Processor.set_image`'s numpy branch reads `height, width = image.shape[-2:]`
+(correct for CHW tensors); our `sam3_segmentor` passed HWC frames, so it read
+`height=W, width=3`. Detection still worked (model input conversion handles HWC)
+but every output mask was interpolated to a **W×3 grid** and boxes were scaled by
+(3, W) — which downstream resizing smeared into the notorious "coarse boxes".
+Fix: pass PIL images (`_to_pil` in `sam3_segmentor.py`). Verified on rawcapdev:
+pixel-accurate silhouettes for vessel (fill 0.86, score 0.94), ketchup bottle
+(0.79/0.57) and wooden block (0.75/0.92) — overlay at
+`output/rawcapdev/sam3_fixed_overlay.jpg`.
+
+### First-ever validated automated per-object isolation on real data
+
+With silhouettes fixed + new binary-COLMAP support (`parse_cameras_bin`/
+`parse_images_bin` + format-agnostic loaders — the direct-COLMAP path emits
+bin-only models, which would otherwise fail loudly), the full Phase-1/2 arc ran
+live on rawcapdev: segment → **object_crops** (new stage) → extract_objects
+MV-projected **1.09M/4M gaussians (vessel), 246k (bottle), 250k (block)** across
+6 views. Zero fallbacks, zero failures. Crops are generator-ready RGBA mattes at
+native res (vessel 3175²) with full provenance (frame, bbox, COLMAP pose,
+matting method, selection scores) in `object_crops/crops.json`.
+
+### ADR-025 implementation (all PRD v4 phases except live 3D generation)
+
+- **R2** `extract_objects`: full-scene-copy + world-XY fallbacks DELETED; per-object
+  failures reported with cause (`object_failures` artifact). `full_scene` label
+  (the environment) still copies by design.
+- **R3** new `object_crops` stage (`src/pipeline/object_crops.py` + config):
+  best-frame selection = silhouette area × log-sharpness × centrality × edge
+  clearance; SAM-matte alpha; rembg fallback for box-like masks; ≥1024² square pad.
+- **R4** multiview conditioning RETIRED: `trellis2_client.py` rewritten single-image
+  (ComfyUI executor now, native-service contract ready); `view_completer.py`,
+  `trellis2_multiview_pbr.json`, `flux2_turnaround.json` + all 3 stock-node Hunyuan
+  workflow JSONs deleted; `multiview_renderer` kept preview-only and fixed to
+  straight alpha (F4 un-premultiply).
+- **R5** `scripts/trellis2_native_service.py` scaffold (HTTP contract final; model
+  calls marked VERIFY-ON-ENV-BUILD; client flips via `trellis2.native_url`).
+- **R6** generator GLB bytes persisted byte-identical (sha256 recorded, lineage
+  sidecar per asset); `texture_bake` skips generator meshes (F7 closed).
+- **R6a** Hunyuan fallback = `reconstruct_from_image()` submitting the PROVEN
+  Hy3D21 graph (hy3d_turnaround.py lineage) in code.
+- **R9** eval harness `eval/objects/run_eval.py` (+ blender turntable): mesh
+  stats/regression gates; `--stats-only` validated against the 2026-07-02 brass
+  vessel GLB (274,588 verts / 483,671 faces / PBRMaterial — exact match).
+- **Tests**: 30 new unit tests (crops, single-image client, object-arc
+  regressions); pipeline subset **144/144 green** in-container.
+
+### LIVE RUNTIME VERIFICATION: crop → single-image TRELLIS.2 → PBR GLB
+
+The full ADR-025 arc ran end-to-end on GPU 1: the automated vessel crop →
+`Trellis2ImageToShape` (1536_cascade, seed 42) → **54.8 MB PBR GLB, 286,009
+verts / 491,067 faces in 479 s**, persisted byte-identical (sha256
+`496d9a84…`) with lineage sidecar — same output class as the manual
+2026-07-02 vessel (274,588 / 483,671). Workbench turntable confirms solid
+geometry + patina albedo (`output/object_e2e/`). Smoke script:
+`scripts/run_hull_e2e.py` (rewritten crop-based; the splat-render version is
+gone).
+
+### Infra root causes fixed along the way
+
+- **ComfyUI has been fighting DiffusionGemma for GPU 0 all along**:
+  `comfyui_entrypoint.sh` passed `--cuda-device 0`, and ComfyUI implements
+  that flag by UNCONDITIONALLY overwriting `CUDA_VISIBLE_DEVICES` — stomping
+  `run_comfyui.sh`'s `COMFYUI_GPU` masking and un-masking the container back
+  onto physical GPU 0 (~40 GB held by the resident LLM server). Explains the
+  2026-07-04 exit-137 OOM-kill and today's first Trellis2ImageToShape OOM
+  (torch saw 19 MiB free on a "47 GiB" device). Fixed: flag dropped, GPU
+  selection now genuinely `COMFYUI_GPU` (`COMFYUI_GPU=1 scripts/run_comfyui.sh`
+  is the working setup while DiffusionGemma owns GPU 0).
+- `set -u` crash in the drtk self-heal (`$PYTHONPATH` unset) — entrypoint died
+  before ComfyUI launch. Fixed (`${PYTHONPATH:-}`).
+- Blender 5 eval turntables: EEVEE renders TRELLIS.2's atlas-padding alpha as
+  transparent patchwork → harness renders with WORKBENCH + texture color.
+
+**Open:** native service env stand-up (R5 acceptance); Pixal3D head-to-head
+(R8; NOTE: Pixal3D is MIT — ADR-025 amended 2026-07-09); R10 pose-solve at
+assembly (placement hints already recorded per asset); R9 references baseline
+committed from the first 3-object eval sweep.
+
 ## 2026-07-02 — First LichtFeld-native E2E on real raw capture (rawcapdev) + build, pipeline, and web fixes
 
 ### E2E milestone: rawcapdev gallery still-life

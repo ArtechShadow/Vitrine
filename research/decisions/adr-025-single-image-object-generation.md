@@ -1,6 +1,26 @@
 # ADR-025 — Single-Image Object Generation (retire splat-render multiview conditioning)
 
-**Status:** Proposed (2026-07-09)
+**Status:** Accepted — implementation landed (2026-07-09)
+
+> **Amendment 2026-07-09 (verification + implementation):**
+> 1. **Correction — Pixal3D is MIT-licensed** (GitHub LICENSE + HF card both
+>    SPDX MIT), not "custom non-MIT" as stated below. The licence half of the
+>    rejection rationale is void; the *one-month community soak* argument
+>    stands, so Pixal3D remains a gated evaluation (PRD v4 R8) — but the eval
+>    should be prioritised, as its licence gate will pass trivially.
+> 2. **Correction — the cited fork `Allen-Zhou729/Trellis2_multiimage` does
+>    not exist** (404). Community multi-image efforts do exist under other
+>    names (e.g. HF Space `opsiclear-admin/Trellis.2.multiview`,
+>    `cuzelac/ComfyUI-Trellis2-MultiViewRefiner`); the decisive quality
+>    evidence (microsoft/TRELLIS.2 issue #103: multi-image worse than
+>    single) is confirmed verbatim.
+> 3. **R1 root cause found and FIXED**: "SAM3 returns boxes" was an HWC/CHW
+>    layout bug in Vitrine's `Sam3Processor.set_image` call (masks were
+>    interpolated to a W×3 grid). One-line fix in `sam3_segmentor.py`;
+>    pixel-accurate silhouettes verified on rawcapdev. The `object_crops`
+>    stage, single-image `trellis2_client`, verbatim-GLB persistence, and
+>    fallback deletions in this ADR are implemented — see
+>    `docs/engineering-log.md` 2026-07-09.
 **Supersedes:** ADR-015 (TRELLIS.2 hull from splat-rendered panel set), ADR-017 (FLUX.2 generative view completion *as TRELLIS conditioning*)
 **Extends:** ADR-010 (key-item hull recon — the "do no harm" principle survives), ADR-014 (agent-controlled ComfyUI — scope narrowed to 2D stages)
 **Drives:** replacement of `trellis2_client.py` conditioning path, retirement of `multiview_renderer.py`/`view_completer.py` from the object pipe, new `object_crops` stage, `prd-v4-object-pipeline-convergence.md`

@@ -1,7 +1,21 @@
 # PRD v4: Object Pipeline Convergence — single-image → textured high/low assets
 
 **Date**: 2026-07-09
-**Status**: Draft
+**Status**: In implementation — Phases 1–3 landed + runtime-verified 2026-07-09
+
+> **Implementation status (2026-07-09):** R1 ✅ (root cause: HWC/CHW bug in our
+> Sam3Processor call, one-line fix — silhouettes verified on rawcapdev);
+> R2 ✅ (fallbacks deleted, loud per-object failures); R3 ✅ (`object_crops`
+> stage, 3/3 crops on rawcapdev); R4 ✅ (multiview subsystems deleted);
+> R5 ◐ (single-image client live on the ComfyUI executor; native service
+> scaffolded, env stand-up pending); R6 ✅ (verbatim GLB + lineage,
+> texture_bake skips generators); R6a ✅ (Hy3D21 graph in code, broken JSONs
+> deleted); R7 ◐ (seed param + lineage flags in place; ladder orchestration
+> pending); R8 ⏳ (note: Pixal3D is MIT — see ADR-025 amendment); R9 ✅
+> (harness + 3-object baseline committed, live run: vessel 492k faces/441s,
+> bottle 483k/158s, block 466k/130s, 0 regressions); R10 ⏳ (placement hints
+> recorded per asset; pose-solve at assembly pending). Proof assets:
+> `docs/renders/object-pipeline-2026-07-09/`.
 **Supersedes scope**: the object-generation half of [prd-v3-e2e-closure.md](prd-v3-e2e-closure.md)
 (selection + recovery); does **not** reopen ingest/provenance/annotation (v3 scope) or
 reconstruction science.

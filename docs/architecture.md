@@ -315,7 +315,7 @@ The `ModelLifecycleManager` hard-tier uses `docker stop` / `docker start` on `vi
 
 The owner `vitrine-comfyui` is pinned to a known-good state via the **Salad add-on control API** (`vitrine-comfyui:3001`) — an in-container control plane for model probe, download, and lifecycle, not a cloud service. The `RecoveryController` (a stateless helper the orchestrator invokes) runs a per-object loop:
 
-1. **Plan** — compose the FLUX.2-dev view-completion or TRELLIS.2 / Hunyuan3D-2.1 hull graph from a template, parameterised by object identity and the artifact report.
+1. **Plan** — compose the FLUX.2-dev recovery graph or the TRELLIS.2 / Hunyuan3D-2.1 SINGLE-image object graph (ADR-025 — conditioning is the object_crops matte, never splat renders) from a template, parameterised by object identity and the artifact report.
 2. **Submit** — `POST /prompt` (graph API); poll `/history/{id}`; fetch outputs.
 3. **Evaluate** — scores the generated image or mesh render against object identity and artifact criteria. This step is *visual*, so it needs the staged gemma-4 vision fallback (or the `claude_code` backend) — text-only DiffusionGemma cannot see and handles only the planning/reasoning around it.
 4. **Decide** — `accept` | `re-prompt` (adjust denoise/guidance/seed/mask, bounded retry budget) | `veto` (unrecoverable). Every attempt is annotated in the per-video ledger; nothing is silently dropped.
