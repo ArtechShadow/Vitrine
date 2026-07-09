@@ -182,7 +182,8 @@ REGISTRY: dict[str, Element] = {
             node_repo="visualbruno/ComfyUI-Trellis2",   # mature (FP8/flash-attn); PozzettiAndrea=Linux/pixi alt
             checkpoints=["TRELLIS.2-4B"],
             node_commit="pip:comfy-sparse-attn==0.1.3 (cp312 wheel)",
-            caveats=["MIT + PBR textured + sharp topology; multi-view input (<=16); ADR-015 designated primary",
+            caveats=["MIT + PBR textured + sharp topology; SINGLE-image conditioning (ADR-025 — "
+                     "official API is single-image only; multiview panels retired, see audit 2026-07-09)",
                      "UNBLOCKED 2026-06-19: ComfyUI-TRELLIS2 now LOADS (24 trellis nodes live in "
                      "vitrine-comfyui /object_info). Fix was pip-installing comfy-env/comfy-sparse-attn/"
                      "comfy-3d-viewers (comfy-sparse-attn ships a prebuilt cp312 wheel — no compile); "
@@ -190,31 +191,28 @@ REGISTRY: dict[str, Element] = {
                      "RUNTIME-VERIFIED 2026-06-20: produced a GLB from a single image end-to-end — "
                      "geometry (122MB) AND full PBR-textured (29MB, decimated 500k-face + baked texture) "
                      "after patching a Trellis2RasterizePBR cv2.inpaint()[...,None] 4D-array bug (entrypoint 1d). "
-                     "Production workflow trellis2_multiview_pbr.json targets 1536_cascade geometry / 4096 PBR. "
+                     "Production workflow trellis2_single_image_pbr.json targets 1536_cascade geometry / 4096 PBR. "
                      "DINOv3 staged from the UNGATED camenduru/dinov3-vitl16-pretrain-lvd1689m mirror "
                      "(facebook/ repo is HF-gated 403; node loads the local file at models/dinov3/). "
                      "CUDA exts installed from pozzettiandrea.github.io/cuda-wheels/v2 (exact cu130/torch2.11/"
                      "cp312, no compile): cumesh_vb, o_voxel_vb_ap, flex_gemm_vb/ap; + easydict/utils3d/"
                      "igraph/xatlas/zstandard. All folded into scripts/comfyui_entrypoint.sh.",
-                     "hull chain (validated nodes): Trellis2RemoveBackground -> Trellis2GetConditioning -> "
-                     "Trellis2MultiViewImageToShape (front/back/left/right/top/bottom + masks) -> "
-                     "Trellis2ShapeToTexturedMesh -> Trellis2RasterizePBR -> Trellis2ExportGLB. "
-                     "Author API workflow from the pack's workflows/geometry_texture.json (UI-format) example."],
+                     "object chain (ADR-025): object_crops best-frame matte -> LoadImage+InvertMask -> "
+                     "Trellis2GetConditioning -> Trellis2ImageToShape -> Trellis2ProcessMesh -> "
+                     "Trellis2ShapeToTexturedMesh -> Trellis2RasterizePBR -> Trellis2ExportTrimesh. "
+                     "GLB bytes persisted verbatim (PRD v4 R6); native-pipeline service is the target executor."],
         ),
         [
             ModelSpec("hull", "Hunyuan3D-2.1", "2025-06-13", Licence.TENCENT_COMMUNITY, 29.0,
                       "comfyui", repo="tencent/Hunyuan3D-2.1",
                       node_repo="visualbruno/ComfyUI-Hunyuan3d-2-1",
                       checkpoints=["hunyuan3d-dit-v2-1", "hunyuan3d-paintpbr-v2-1"],
-                      caveats=["multiview (2mv) variant matches our orbit renderer",
-                               "GROUND TRUTH 2026-06-19: only 2.0-mv weights staged "
-                               "(/staging/hunyuan3d/hunyuan3d-dit-v2-mv/model.fp16.safetensors); "
-                               "2.1 dit-v2-1 + paintpbr NOT staged -> pull to enable 2.1 PBR",
-                               "PBR nodes ARE installed (Hy3DMultiViewsGenerator->Hy3DBakeMultiViews -> "
-                               "albedo+mr) but hunyuan3d21_multiview.json never calls them => untextured. "
-                               "Stock ImageOnlyCheckpointLoader reads checkpoints/ (EMPTY) not the mapped "
-                               "hunyuan3d/ dir -> rework workflow to Hy3D wrapper loaders (Hy3D21VAELoader/"
-                               "Hy3D21LoadMesh) or stage dit into checkpoints/"]),
+                      caveats=["fallback generator behind TRELLIS.2 (ADR-025): single-image "
+                               "reconstruct_from_image() submits the PROVEN Hy3D21 graph in code "
+                               "(hy3d_turnaround.py lineage — produced the validated dreamlab objects); "
+                               "the old stock-node workflow JSONs (ImageOnlyCheckpointLoader on an empty "
+                               "checkpoints/, fictional class names — audit F8) are DELETED",
+                               "2mv/Omni variants reserved for genuine multi-photo captures (PRD v4 R8)"]),
             ModelSpec("hull", "SAM-3D-Objects", "2025", Licence.NONCOMMERCIAL, 32.0, "comfyui",
                       node_repo="PozzettiAndrea/ComfyUI-SAM3DObjects",
                       node_commit="cc2ba08d7e53f767d7115f5a3a3cb9bb76fc2746",

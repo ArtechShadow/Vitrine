@@ -243,6 +243,28 @@ class InpaintConfig:
 
 
 @dataclass
+class ObjectCropsConfig:
+    """Best-frame object crop extraction (ADR-025 D1 / PRD v4 R3).
+
+    For each SAM3 object the stage selects the best observing source frame
+    (silhouette area x sharpness x centrality x edge clearance), crops with
+    padding, mattes, and square-pads to >= ``out_size``. The crop is the ONLY
+    conditioning input the 3D generator receives.
+    """
+    pad_frac: float = 0.12             # bbox padding as a fraction of its long side
+    out_size: int = 1024               # minimum square output size (upscaled if smaller)
+    candidates: int = 12               # top-by-area frames scored fully (sharpness needs decode)
+    min_mask_area_px: int = 400        # ignore frames where the object is tiny
+    # Matting: "auto" uses the SAM silhouette as alpha, falling back to rembg
+    # when the mask is box-shaped (the SAM3 boxes bug, PRD v4 R1); "mask" and
+    # "rembg" force a backend; "none" emits an opaque crop (flagged in lineage).
+    matting: str = "auto"
+    # A mask filling >= this fraction of its own bbox is treated as a box, not
+    # a silhouette (the R1 defect signature).
+    boxlike_fill_threshold: float = 0.95
+
+
+@dataclass
 class Hunyuan3DConfig:
     """Hunyuan3D 2.0 mesh reconstruction parameters."""
     enabled: bool = True
@@ -268,35 +290,45 @@ class Hunyuan3DConfig:
 
 @dataclass
 class Trellis2Config:
-    """TRELLIS.2-4B hull reconstruction (ADR-015 designated-primary hull).
+    """TRELLIS.2-4B object generation, SINGLE-image conditioning (ADR-025).
 
-    Runtime-verified 2026-06-20 (produces PBR-textured GLBs via the
-    ComfyUI-TRELLIS2 nodes). ``enabled`` makes it the primary hull backend,
-    attempted before Hunyuan3D in ``stages.py`` (which degrades to Hunyuan3D /
-    TSDF on any failure). Endpoint defaults to the v2g-net ComfyUI service name.
+    The generator is conditioned on one clean, matted best-frame crop from the
+    ``object_crops`` stage — never on splat renders (ADR-025 supersedes the
+    ADR-015/017 multiview-panel path). ``native_url`` selects the thin HTTP
+    service wrapping the native TRELLIS.2 pipeline (PRD v4 R5); when empty the
+    single-image ComfyUI workflow is used (runtime-verified node pack, interim
+    executor until the native service env is stood up).
     """
     enabled: bool = True
     comfyui_url: str = "http://vitrine-comfyui:8188"
+    # Thin native-pipeline service (scripts/trellis2_native_service.py). Empty
+    # string = use the ComfyUI single-image workflow instead.
+    native_url: str = ""
     # LoadTrellis2Models resolution: 512 | 1024 | 1024_cascade | 1536_cascade.
     resolution: str = "1536_cascade"
-    texture_size: int = 4096           # Trellis2RasterizePBR texture resolution
+    texture_size: int = 4096           # PBR texture resolution
     timeout: int = 1800                # TRELLIS.2 + PBR is slow; time is not a constraint
     seed: int = 42
-    render_size: int = 512
-    camera_distance: float = 2.5
+    ss_steps: int = 12                 # sparse-structure sampling steps
+    shape_steps: int = 12              # shape diffusion steps
+    tex_steps: int = 12                # texture diffusion steps
+    # High/low asset pair (native service to_glb x2, PRD v4 R5).
+    face_count_high: int = 500_000
+    face_count_low: int = 20_000
 
 
 @dataclass
 class ViewCompletionConfig:
-    """Generative 360 view completion before the hull (ADR-017).
+    """RETIRED from the object arc (ADR-025 supersedes ADR-017).
 
-    For partial captures the splat lacks the occluded sides, so those panels
-    render empty. When enabled, FLUX.2 synthesises plausible novel views for the
-    EMPTY panels only (coverage-gated — observed panels are kept), conditioned on
-    the observed views + a JSON prompt, so TRELLIS.2 gets a complete 360 set.
-    Coverage-gated, so a no-op on full captures. Requires the FLUX.2 stack staged.
+    FLUX.2 panel completion conditioned the generator on synthesized views of a
+    partial splat — an anti-pattern the 2026-07-09 audit measured as strictly
+    worse than one clean source-frame crop. The dataclass is retained only so
+    existing config JSONs with a ``view_completion`` section still load; the
+    pipeline no longer reads it. Occlusion escalation is now seed re-rolls +
+    image-edit alternative attempts (PRD v4 R7).
     """
-    enabled: bool = True
+    enabled: bool = False
     comfyui_url: str = "http://vitrine-comfyui:8188"
     generator: str = "flux2"           # flux2 | qwen-image-edit (commercial-safe)
     gap_threshold: float = 0.02        # coverage <= this -> synthesise
@@ -403,6 +435,7 @@ class PipelineConfig:
     reconstruct: ReconstructConfig = field(default_factory=ReconstructConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     decompose: DecomposeConfig = field(default_factory=DecomposeConfig)
+    object_crops: ObjectCropsConfig = field(default_factory=ObjectCropsConfig)
     mesh: MeshConfig = field(default_factory=MeshConfig)
     trellis2: Trellis2Config = field(default_factory=Trellis2Config)
     view_completion: ViewCompletionConfig = field(default_factory=ViewCompletionConfig)
@@ -448,6 +481,7 @@ class PipelineConfig:
             "reconstruct": ReconstructConfig,
             "training": TrainingConfig,
             "decompose": DecomposeConfig,
+            "object_crops": ObjectCropsConfig,
             "mesh": MeshConfig,
             "trellis2": Trellis2Config,
             "view_completion": ViewCompletionConfig,

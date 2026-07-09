@@ -1,0 +1,82 @@
+{
+  "_comment": "TRELLIS.2-4B SINGLE-image -> PBR-textured GLB (ADR-025 D2; supersedes trellis2_multiview_pbr.json). Conditioning input is one matted best-frame object crop from the object_crops stage (RGBA: alpha = SAM silhouette). LoadImage's MASK output is 1-alpha, hence the InvertMask before Trellis2GetConditioning (which wants white=object). No RemoveBackground node: the matte was decided upstream and is part of the crop's provenance. Placeholders: CROP_IMAGE_PLACEHOLDER; the client sets resolution/seed/steps/texture_size/face counts at submit time.",
+  "1": {
+    "class_type": "LoadTrellis2Models",
+    "inputs": {
+      "resolution": "1536_cascade"
+    }
+  },
+  "10": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "CROP_IMAGE_PLACEHOLDER"
+    }
+  },
+  "15": {
+    "class_type": "InvertMask",
+    "inputs": {
+      "mask": ["10", 1]
+    }
+  },
+  "30": {
+    "class_type": "Trellis2GetConditioning",
+    "inputs": {
+      "model_config": ["1", 0],
+      "image": ["10", 0],
+      "mask": ["15", 0],
+      "background_color": "black"
+    }
+  },
+  "40": {
+    "class_type": "Trellis2ImageToShape",
+    "inputs": {
+      "model_config": ["1", 0],
+      "conditioning": ["30", 0],
+      "seed": 42,
+      "ss_sampling_steps": 12,
+      "shape_sampling_steps": 12
+    }
+  },
+  "45": {
+    "class_type": "Trellis2ProcessMesh",
+    "inputs": {
+      "trimesh": ["40", 0],
+      "remesh": true,
+      "target_face_count": 500000
+    }
+  },
+  "50": {
+    "class_type": "Trellis2ShapeToTexturedMesh",
+    "inputs": {
+      "model_config": ["1", 0],
+      "conditioning": ["30", 0],
+      "shape_slat": ["40", 1],
+      "subs": ["40", 2],
+      "seed": 42,
+      "tex_sampling_steps": 12
+    }
+  },
+  "60": {
+    "class_type": "Trellis2RasterizePBR",
+    "inputs": {
+      "trimesh": ["45", 0],
+      "voxelgrid": ["50", 0],
+      "texture_size": 4096,
+      "original_mesh": ["40", 0]
+    }
+  },
+  "70": {
+    "class_type": "Trellis2ExportTrimesh",
+    "inputs": {
+      "trimesh": ["60", 0],
+      "filename_prefix": "vitrine_object",
+      "file_format": "glb"
+    }
+  },
+  "80": {
+    "class_type": "Preview3D",
+    "inputs": {
+      "model_file": ["70", 0]
+    }
+  }
+}

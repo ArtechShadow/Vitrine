@@ -48,6 +48,7 @@ STAGE_NAMES: list[str] = [
     "train",
     "render_previews",
     "segment",
+    "object_crops",
     "extract_objects",
     "mesh_objects",
     "texture_bake",
@@ -1653,12 +1654,12 @@ class PipelineStages:
         orchestrator (the claude_code agent / web / MCP layer); absent a callback
         discovery degrades to the static concept list.
 
-        Known issue: SAM3 currently returns coarse axis-aligned bounding boxes
-        rather than pixel-level silhouettes (``segment_by_concepts`` mask output).
-        As a result ``extract_objects`` receives the full scene extent for each
-        concept and the mask-based gaussian isolation has no effect — it falls back
-        to copying the full PLY. The working object path until this is resolved is
-        a manual SAM image crop fed into TRELLIS.2 image→3D via ComfyUI.
+        RESOLVED 2026-07-09 (PRD v4 R1): the "coarse boxes" defect was an
+        HWC/CHW layout bug in our Sam3Processor call — set_image's numpy
+        branch read (height, width) = shape[-2:] = (W, 3), so every mask was
+        interpolated to a Wx3 grid. sam3_segmentor now passes PIL images and
+        SAM3 returns pixel-accurate full-resolution silhouettes (verified on
+        rawcapdev: vessel/bottle/block, see sam3_fixed_overlay.jpg).
 
         Returns: {objects: list[{label, object_id, mask_pixels}], masks_dir}
         """
@@ -1821,26 +1822,151 @@ class PipelineStages:
         )
 
     # ------------------------------------------------------------------
+    # Stage 6b: Object crops (ADR-025 D1 / PRD v4 R3)
+    # ------------------------------------------------------------------
+
+    def object_crops(self, frames_dir: str,
+                     objects: list | dict | str | None = None) -> StageResult:
+        """Best-frame crop + matte per SAM3 object.
+
+        The crops produced here are the ONLY conditioning input the 3D
+        generator receives (ADR-025 D1) — the splat contributes pose/scale,
+        never pixels. Every crop carries provenance (source frame, bbox,
+        COLMAP camera pose, matting method, selection scores) in
+        ``object_crops/crops.json``. Objects with no usable observation are
+        reported failures, never silently skipped.
+
+        Args:
+            frames_dir: Directory of source frames the segment stage saw.
+            objects: Object list from segment() (JSON string, list, or dict).
+
+        Returns: {crops_manifest, object_crops: list[{label, object_id, crop}]}
+        """
+        from pipeline import object_crops as oc
+
+        if isinstance(objects, str):
+            objects = json.loads(objects)
+        elif isinstance(objects, dict):
+            objects = [objects]
+        objects = [o for o in (objects or [])
+                   if o.get("label") != "full_scene" and o.get("object_id") is not None]
+
+        if not objects:
+            return StageResult(
+                success=True, stage="object_crops",
+                metrics={"skipped": True, "reason": "no segmented objects"},
+                artifacts={"object_crops": json.dumps([])},
+            )
+
+        frames_path = Path(frames_dir)
+        if not frames_path.exists():
+            return StageResult(
+                success=False, stage="object_crops",
+                error=f"Frames directory not found: {frames_dir}",
+            )
+
+        cfg = self.config.object_crops
+        perframe_root = self.job_dir / "sam3_masks" / "perframe"
+        out_dir = self.job_dir / "object_crops"
+        colmap_dir = self._find_colmap_dir()
+
+        results: list[oc.CropResult] = []
+        crop_failures: list[dict[str, Any]] = []
+        for obj in objects:
+            label = obj.get("label", "unknown")
+            oid = int(obj["object_id"])
+            perframe_dir = perframe_root / f"{oid:04d}"
+            if not perframe_dir.exists():
+                crop_failures.append({
+                    "label": label, "object_id": oid,
+                    "error": f"no per-frame masks at {perframe_dir}",
+                })
+                continue
+            try:
+                res = oc.extract_object_crop(
+                    label, oid, perframe_dir, frames_path, out_dir,
+                    colmap_dir=colmap_dir,
+                    pad_frac=cfg.pad_frac,
+                    out_size=cfg.out_size,
+                    candidates=cfg.candidates,
+                    min_mask_area_px=cfg.min_mask_area_px,
+                    matting=cfg.matting,
+                    boxlike_fill_threshold=cfg.boxlike_fill_threshold,
+                )
+            except Exception as exc:  # noqa: BLE001 — reported per object
+                res = None
+                crop_failures.append({"label": label, "object_id": oid,
+                                      "error": f"crop extraction failed: {exc}"})
+                continue
+            if res is None:
+                crop_failures.append({
+                    "label": label, "object_id": oid,
+                    "error": ("no usable observation (all frames below "
+                              f"min_mask_area_px={cfg.min_mask_area_px} or unreadable)"),
+                })
+                continue
+            if res.provenance.get("boxlike_mask"):
+                logger.warning(
+                    "Crop for '%s' built from a BOX-shaped mask (R1 defect); "
+                    "matting=%s", label, res.provenance.get("matting"))
+            results.append(res)
+
+        out_dir.mkdir(parents=True, exist_ok=True)
+        manifest = oc.write_crops_manifest(
+            results, crop_failures, out_dir / "crops.json")
+
+        if not results:
+            causes = "; ".join(f"{f['label']}: {f['error']}"
+                               for f in crop_failures[:8])
+            return StageResult(
+                success=False, stage="object_crops",
+                error=f"No object crops could be extracted. {causes}",
+                metrics={"failed": len(crop_failures)},
+                artifacts={"crops_manifest": str(manifest)},
+            )
+
+        crops_list = [
+            {"label": r.label, "object_id": r.object_id, "crop": str(r.crop_path)}
+            for r in results
+        ]
+        return StageResult(
+            success=True, stage="object_crops",
+            metrics={
+                "crop_count": len(results),
+                "failed": len(crop_failures),
+                "boxlike_masks": sum(
+                    1 for r in results if r.provenance.get("boxlike_mask")),
+            },
+            artifacts={
+                "crops_manifest": str(manifest),
+                "object_crops": json.dumps(crops_list),
+                **{f"crop:{r.label}": str(r.crop_path) for r in results},
+            },
+        )
+
+    # ------------------------------------------------------------------
     # Stage 7: Extract objects
     # ------------------------------------------------------------------
 
     def extract_objects(self, ply_path: str, labels: dict | list | str | None = None) -> StageResult:
         """Extract per-object PLY files from the trained model.
 
-        Per-object PLYs produced here are routed downstream to TRELLIS.2 for
-        textured mesh reconstruction (gap #8). The ComfyUI endpoint for TRELLIS.2
-        is ``http://vitrine-comfyui:8188`` (service-DNS within ``v2g-net``). When
-        SAM3 silhouette masks are available, gaussians are isolated via depth-aware
-        multi-view projection (ADR-010 D10); otherwise the full PLY is copied and
-        TRELLIS.2 receives the whole-scene point cloud for each object — usable
-        only when the object occupies most of the scene.
+        Gaussians are isolated via depth-aware multi-view mask projection
+        (ADR-010 D10) from the SAM3 per-frame masks + COLMAP cameras. Per
+        ADR-025 there are NO silent fallbacks: an object that cannot be isolated
+        (missing masks, no COLMAP, empty projection) is reported as a per-object
+        failure with cause — never approximated by copying the whole scene.
+        Only the literal ``full_scene`` label (the environment) copies the
+        trained PLY, because the whole scene IS that object. Per-object PLYs are
+        used downstream for pose/scale placement (ADR-025 D3); generator
+        conditioning comes from the ``object_crops`` stage, never from these.
 
         Args:
             ply_path: Path to the trained gaussian PLY.
             labels: Object definitions from segment(). Can be a JSON string,
                     list of dicts, or None (full_scene fallback).
 
-        Returns: {object_plys: list[str]}
+        Returns: {object_plys: list[str], object_failures: list[{label, error}]}
         """
         trained_ply = Path(ply_path)
         if not trained_ply.exists():
@@ -1864,9 +1990,9 @@ class PipelineStages:
 
         masks_dir = self.job_dir / "sam3_masks"
         has_masks = masks_dir.exists() and any(masks_dir.glob("*.npy"))
-        # ADR-010 D10: when COLMAP cameras + per-frame masks are available, use
-        # the depth-aware multi-view projection; otherwise fall back to the
-        # single-mask heuristic.
+        # ADR-010 D10: COLMAP cameras + per-frame masks drive the depth-aware
+        # multi-view projection. There is no camera-free fallback (ADR-025):
+        # without them, isolation is a reported failure.
         colmap_dir = self._find_colmap_dir()
         perframe_avail = (masks_dir / "perframe").exists()
 
@@ -1882,38 +2008,49 @@ class PipelineStages:
 
         extracted: list[dict[str, Any]] = []
         dropped: list[dict[str, Any]] = []
+        failures: list[dict[str, Any]] = []
 
         for obj in objects:
             label = obj.get("label", "unknown")
             safe_name = label.replace(" ", "_").replace("/", "_")[:50]
             out_ply = objects_dir / f"{safe_name}.ply"
 
-            # full_scene (and the no-mask fallback) is the whole environment —
-            # never keyness-ranked or dropped.
-            if label == "full_scene" or not has_masks:
+            # full_scene is the whole environment — the trained PLY IS the
+            # object. Never keyness-ranked or dropped.
+            if label == "full_scene":
                 shutil.copy2(str(trained_ply), str(out_ply))
                 extracted.append({"label": label, "ply": str(out_ply),
                                   "gaussian_count": -1, "keyness": float("inf")})
                 logger.info("Copied trained PLY as '%s': %s", label, out_ply)
                 continue
 
-            # Mask-based extraction returns the number of gaussians assigned.
+            # ADR-025: no silent fallbacks. Isolation requires SAM3 per-frame
+            # masks + a COLMAP model for the depth-aware multi-view projection;
+            # anything less is a reported per-object failure, not a fake asset.
+            error: str | None = None
+            if not has_masks:
+                error = "no SAM3 masks (sam3_masks/ missing or empty)"
+            elif obj.get("object_id") is None:
+                error = "object has no object_id (segment stage emitted no mask)"
+            elif colmap_dir is None:
+                error = "no COLMAP sparse model for multi-view mask projection"
+            elif not perframe_avail:
+                error = "no per-frame masks (sam3_masks/perframe/ missing)"
+
             count = 0
-            try:
-                if colmap_dir is not None and perframe_avail:
+            if error is None:
+                try:
                     count = self._extract_with_mask_mv(
                         obj, trained_ply, out_ply, masks_dir, colmap_dir)
-                if count <= 0:  # no colmap / mv found nothing -> XY fallback
-                    count = self._extract_with_mask(obj, trained_ply, out_ply, masks_dir)
-            except Exception as exc:
-                logger.warning("Mask extraction failed for '%s': %s", label, exc)
-                count = 0
+                    if count <= 0:
+                        error = "multi-view mask projection assigned 0 gaussians"
+                except Exception as exc:
+                    error = f"multi-view mask projection failed: {exc}"
 
-            if count <= 0:
-                # Un-isolable object: preserve prior behaviour (copy full PLY).
-                shutil.copy2(str(trained_ply), str(out_ply))
-                extracted.append({"label": label, "ply": str(out_ply),
-                                  "gaussian_count": -1, "keyness": 0.0})
+            if error is not None:
+                logger.warning("Object isolation FAILED for '%s': %s", label, error)
+                failures.append({"label": label, "error": error})
+                out_ply.unlink(missing_ok=True)
                 continue
 
             # FR-9: enforce the (previously dead) min_object_gaussians threshold.
@@ -1932,11 +2069,15 @@ class PipelineStages:
                               "gaussian_count": count, "keyness": round(keyness, 2)})
 
         if not extracted:
+            causes = "; ".join(f"{f['label']}: {f['error']}" for f in failures[:8])
             return StageResult(
                 success=False, stage="extract_objects",
-                error=(f"No objects met min_object_gaussians={min_gaussians} "
-                       f"({len(dropped)} dropped below threshold)"),
-                metrics={"dropped_below_threshold": len(dropped)},
+                error=(f"No objects could be isolated "
+                       f"({len(failures)} failed, {len(dropped)} below "
+                       f"min_object_gaussians={min_gaussians}). {causes}"),
+                metrics={"failed": len(failures),
+                         "dropped_below_threshold": len(dropped)},
+                artifacts={"object_failures": json.dumps(failures)},
             )
 
         # FR-9: rank by keyness (descending) so downstream per-object hull
@@ -1947,6 +2088,7 @@ class PipelineStages:
             success=True, stage="extract_objects",
             metrics={
                 "extracted_count": len(extracted),
+                "failed": len(failures),
                 "dropped_below_threshold": len(dropped),
                 "min_object_gaussians": min_gaussians,
                 "ranking": [e["label"] for e in extracted],
@@ -1954,22 +2096,18 @@ class PipelineStages:
             artifacts={
                 "object_plys": json.dumps([e["ply"] for e in extracted]),
                 "object_ranking": json.dumps(extracted),
+                "object_failures": json.dumps(failures),
                 **{f"ply:{e['label']}": e["ply"] for e in extracted},
             },
         )
 
     def _find_colmap_dir(self) -> "Path | None":
-        """Locate a COLMAP sparse model (text format) in the job dir, for the
-        depth-aware mask projection. Returns None if none is found."""
-        for c in (
-            self.job_dir / "colmap" / "sparse" / "0",
-            self.job_dir / "colmap" / "sparse",
-            self.job_dir / "colmap" / "undistorted" / "sparse" / "0",
-            self.job_dir / "colmap",
-        ):
-            if (c / "images.txt").exists() and (c / "cameras.txt").exists():
-                return c
-        return None
+        """Locate a COLMAP sparse model (text OR binary) in the job dir, for
+        the depth-aware mask projection + crop pose provenance. The direct-
+        COLMAP path emits binary-only models (e.g. rawcapdev), so both formats
+        are accepted. Returns None if none is found."""
+        from pipeline.colmap_parser import find_model_dir
+        return find_model_dir(self.job_dir / "colmap")
 
     def _extract_with_mask_mv(
         self,
@@ -1986,7 +2124,7 @@ class PipelineStages:
         views, and keeps gaussians seen inside the object in a majority of the
         views where they are visible. Multi-view consistency + parallax filter the
         occluded-background gaussians that a single-view projection would include.
-        Returns the gaussian count (0 to fall back to the single-mask heuristic).
+        Returns the gaussian count (0 = isolation failed for this object).
         """
         import numpy as np
         object_id = obj.get("object_id")
@@ -1996,11 +2134,11 @@ class PipelineStages:
         if not pf_dir.exists():
             return 0
         try:
-            from pipeline.colmap_parser import parse_cameras_txt, parse_images_txt
+            from pipeline.colmap_parser import load_cameras, load_images
         except Exception:
             return 0
-        cams = parse_cameras_txt(colmap_dir / "cameras.txt")
-        images = parse_images_txt(colmap_dir / "images.txt")
+        cams = load_cameras(colmap_dir)
+        images = load_images(colmap_dir)
         by_stem = {Path(im.name).stem: im for im in images}
 
         import trimesh
@@ -2050,8 +2188,12 @@ class PipelineStages:
             zsafe = np.where(front, z, 1.0)
             u = (cam.focal_x * pc[:, 0] / zsafe + cam.center_x)
             v = (cam.focal_y * pc[:, 1] / zsafe + cam.center_y)
-            ui = u.astype(np.int32)
-            vi = v.astype(np.int32)
+            # Behind-camera / far-outside points can be inf/NaN or overflow
+            # int32; clip before the cast (they are dropped by `vis` anyway).
+            ui = np.nan_to_num(u, nan=-1.0, posinf=-1.0, neginf=-1.0) \
+                .clip(-1, W).astype(np.int32)
+            vi = np.nan_to_num(v, nan=-1.0, posinf=-1.0, neginf=-1.0) \
+                .clip(-1, H).astype(np.int32)
             vis = front & (ui >= 0) & (ui < W) & (vi >= 0) & (vi < H)
             if not vis.any():
                 continue
@@ -2096,88 +2238,45 @@ class PipelineStages:
                     n_sel, N, obj.get("label", "?"), used)
         return n_sel
 
-    def _extract_with_mask(
-        self,
-        obj: dict[str, Any],
-        trained_ply: Path,
-        output_path: Path,
-        masks_dir: Path,
-    ) -> int:
-        """Extract a subset of gaussians using a SAM3 mask.
-
-        Returns the number of gaussians assigned to the object (0 on any
-        failure). Callers use the count to enforce min_object_gaussians (FR-9).
-        """
-        import numpy as np
-
-        object_id = obj.get("object_id")
-        if object_id is None:
-            return 0
-
-        mask_path = masks_dir / f"mask_{int(object_id):04d}.npy"
-        if not mask_path.exists():
-            return 0
-
-        mask = np.load(str(mask_path))
-
-        import trimesh
-        pcd = trimesh.load(str(trained_ply))
-        if hasattr(pcd, "vertices"):
-            points = np.asarray(pcd.vertices)
-        else:
-            points = np.asarray(pcd.points) if hasattr(pcd, "points") else None
-        if points is None or len(points) == 0:
-            return 0
-
-        h, w = mask.shape[-2], mask.shape[-1]
-        xy = points[:, :2]
-        xy_min = xy.min(axis=0)
-        xy_max = xy.max(axis=0)
-        xy_range = xy_max - xy_min
-        xy_range[xy_range == 0] = 1.0
-
-        px = ((xy[:, 0] - xy_min[0]) / xy_range[0] * (w - 1)).astype(int).clip(0, w - 1)
-        py = ((xy[:, 1] - xy_min[1]) / xy_range[1] * (h - 1)).astype(int).clip(0, h - 1)
-
-        mask_2d = mask[0] if mask.ndim == 3 else mask
-        inside = mask_2d[py, px] > 0
-        if inside.sum() == 0:
-            return 0
-
-        filtered_points = points[inside]
-        colors = None
-        if hasattr(pcd, "visual") and hasattr(pcd.visual, "vertex_colors"):
-            all_colors = np.asarray(pcd.visual.vertex_colors)
-            colors = all_colors[inside]
-
-        filtered_pcd = trimesh.PointCloud(filtered_points)
-        if colors is not None:
-            filtered_pcd.colors = colors
-
-        filtered_pcd.export(str(output_path))
-        logger.info("Extracted %d/%d points for '%s'", inside.sum(), len(points), obj.get("label", "unknown"))
-        return int(inside.sum())
-
     # ------------------------------------------------------------------
     # Stage 8: Mesh objects
     # ------------------------------------------------------------------
 
-    def mesh_objects(self, object_plys: list[str] | str) -> StageResult:
-        """Generate meshes per object PLY.
+    def mesh_objects(self, object_plys: list[str] | str,
+                     crops: list | str | None = None) -> StageResult:
+        """Generate meshes: environment from the splat, objects from crops.
+
+        ADR-025: the 3D generator is conditioned on the object's best-frame
+        crop (from the ``object_crops`` stage) — NEVER on renders of the
+        per-object splat. The per-object PLY is kept alongside for pose/scale
+        at assembly. ``full_scene`` (the environment) keeps the gsplat-TSDF
+        geometry path. An object with no crop is a reported failure.
 
         Args:
             object_plys: List of PLY paths, or a JSON string of a list.
+            crops: object_crops artifact — list of {label, object_id, crop}
+                   (or its JSON string).
 
-        Returns: {meshes: list[{label, mesh, ply, vertex_count, method}]}
+        Returns: {meshes: list[{label, mesh, ply, vertex_count, method, ...}],
+                  mesh_failures: list[{label, error}]}
         """
         if isinstance(object_plys, str):
             object_plys = json.loads(object_plys)
+        if isinstance(crops, str):
+            crops = json.loads(crops)
 
-        import trimesh
+        # Crops are keyed by the same safe-name used for the PLY stem.
+        def _safe(name: str) -> str:
+            return name.replace(" ", "_").replace("/", "_")[:50]
+        crop_by_safe_label: dict[str, dict[str, Any]] = {
+            _safe(c.get("label", "")): c for c in (crops or [])
+        }
+        crop_provenance = self._load_crop_provenance()
 
         meshes_dir = self.job_dir / "objects" / "meshes"
         meshes_dir.mkdir(parents=True, exist_ok=True)
         results: list[dict[str, Any]] = []
+        mesh_failures: list[dict[str, Any]] = []
 
         from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
@@ -2185,6 +2284,8 @@ class PipelineStages:
             ply = Path(ply_path)
             if not ply.exists():
                 logger.warning("PLY not found: %s", ply_path)
+                mesh_failures.append({"label": ply.stem,
+                                      "error": f"PLY not found: {ply_path}"})
                 continue
 
             label = ply.stem
@@ -2192,40 +2293,70 @@ class PipelineStages:
             obj_dir.mkdir(parents=True, exist_ok=True)
             mesh_glb = obj_dir / f"{label}.glb"
             mesh_obj = obj_dir / f"{label}.obj"
+            crop_entry = crop_by_safe_label.get(label)
 
-            # Run each object mesh with a 600s (10 min) timeout to prevent
-            # the stage from hanging in subprocess environments where
-            # SIGALRM doesn't propagate.
+            # Run each object with a hard timeout to prevent the stage from
+            # hanging in subprocess environments where SIGALRM doesn't propagate.
             try:
                 with ThreadPoolExecutor(max_workers=1) as executor:
                     future = executor.submit(
-                        self._mesh_single, label, str(ply), obj_dir, mesh_obj, mesh_glb,
+                        self._mesh_single, label, str(ply), obj_dir, mesh_obj,
+                        mesh_glb, crop_entry, crop_provenance.get(label),
                     )
                     mesh_result = future.result(timeout=3600)
             except FuturesTimeout:
-                logger.warning("Meshing timed out (3600s) for '%s', skipping", label)
+                logger.warning("Meshing timed out (3600s) for '%s'", label)
                 mesh_result = None
+                mesh_failures.append({"label": label, "error": "timed out (3600s)"})
             except Exception as exc:
                 logger.warning("Meshing failed for '%s': %s", label, exc)
                 mesh_result = None
+                mesh_failures.append({"label": label, "error": str(exc)})
 
             if mesh_result is not None:
                 results.append(mesh_result)
+            elif not any(f["label"] == label for f in mesh_failures):
+                mesh_failures.append({
+                    "label": label,
+                    "error": ("no generator produced a mesh "
+                              + ("" if crop_entry else "(no object crop available)")).strip(),
+                })
 
         if not results:
+            causes = "; ".join(f"{f['label']}: {f['error']}" for f in mesh_failures[:8])
             return StageResult(
                 success=False, stage="mesh_objects",
-                error="No meshes could be generated",
+                error=f"No meshes could be generated. {causes}",
+                metrics={"failed": len(mesh_failures)},
+                artifacts={"mesh_failures": json.dumps(mesh_failures)},
             )
 
         return StageResult(
             success=True, stage="mesh_objects",
-            metrics={"mesh_count": len(results)},
+            metrics={"mesh_count": len(results), "failed": len(mesh_failures)},
             artifacts={
                 "meshes": json.dumps(results),
+                "mesh_failures": json.dumps(mesh_failures),
                 **{f"mesh:{r['label']}": r["mesh"] for r in results},
             },
         )
+
+    def _load_crop_provenance(self) -> dict[str, dict[str, Any]]:
+        """Provenance per safe-label from the object_crops manifest (if any)."""
+        manifest = self.job_dir / "object_crops" / "crops.json"
+        if not manifest.exists():
+            return {}
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+            out: dict[str, dict[str, Any]] = {}
+            for entry in data.get("crops", []):
+                label = entry.get("label", "")
+                safe = label.replace(" ", "_").replace("/", "_")[:50]
+                out[safe] = entry
+            return out
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Could not read crops manifest: %s", exc)
+            return {}
 
     def _mesh_single(
         self,
@@ -2234,10 +2365,23 @@ class PipelineStages:
         obj_dir: Path,
         mesh_obj_path: Path,
         mesh_glb_path: Path,
+        crop_entry: dict[str, Any] | None = None,
+        provenance: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        """Try all meshing strategies for a single object PLY."""
+        """Mesh one entry: environment via geometry, objects via the generator.
+
+        Non-``full_scene`` objects take the ADR-025 generator path — one matted
+        crop into TRELLIS.2 (Hunyuan3D-2.1 single-image as fallback). There is
+        no geometry-from-partial-splat fallback for objects: an orbit-TSDF of a
+        partially-captured object splat is holey/noisy, and shipping it would
+        be a silent quality lie. Failures raise (reported by mesh_objects).
+        """
         import numpy as np
         import trimesh
+
+        if label != "full_scene":
+            return self._generate_object_from_crop(
+                label, ply_path, mesh_glb_path, crop_entry, provenance)
 
         points, colors = _load_ply_points(ply_path)
         if points is None or len(points) == 0:
@@ -2342,75 +2486,10 @@ class PipelineStages:
         except Exception as exc:
             logger.warning("gsplat meshing failed for '%s': %s", label, exc)
 
-        # Strategy 0c: TRELLIS.2 — ADR-015 designated-primary hull (MIT, PBR
-        # textured; runtime-verified 2026-06-20). Tried before Hunyuan3D; any
-        # failure (or no mesh) degrades to the Hunyuan3D / TSDF chain below.
-        trellis2_cfg = getattr(self.config, "trellis2", None)
-        if trellis2_cfg is not None and getattr(trellis2_cfg, "enabled", False):
-            try:
-                from pipeline.trellis2_client import Trellis2Client
-
-                t2 = Trellis2Client.from_config(trellis2_cfg)
-                # ADR-017: attach FLUX.2 generative view completion (coverage-gated)
-                # so partial captures still reconstruct a full 360 hull.
-                vc_cfg = getattr(self.config, "view_completion", None)
-                if vc_cfg is not None and getattr(vc_cfg, "enabled", False):
-                    try:
-                        from pipeline.view_completer import ViewCompleter
-                        t2.view_completer = ViewCompleter.from_config(vc_cfg)
-                    except Exception as vc_exc:
-                        logger.warning("View completer unavailable: %s", vc_exc)
-                t2_result = t2.reconstruct_from_gaussians(
-                    ply_path, label=label, object_desc={"label": label},
-                )
-                if t2_result.mesh is not None:
-                    t2_result.mesh.export(str(mesh_glb_path))
-                    t2_result.mesh.export(str(mesh_obj_path))
-                    vc = len(t2_result.mesh.vertices)
-                    logger.info("TRELLIS.2 hull for '%s': %d verts (%.0fs)",
-                                label, vc, t2_result.duration_seconds)
-                    return {
-                        "label": label, "mesh": str(mesh_glb_path), "mesh_obj": str(mesh_obj_path),
-                        "ply": ply_path, "vertex_count": vc, "method": "trellis2",
-                    }
-                logger.warning("TRELLIS.2 returned no mesh for '%s'; degrading to Hunyuan3D", label)
-            except Exception as exc:
-                logger.warning("TRELLIS.2 failed for '%s': %s; degrading to Hunyuan3D", label, exc)
-
-        # Strategy 1: Hunyuan3D
-        if self.config.hunyuan3d.enabled:
-            try:
-                from pipeline.hunyuan3d_client import Hunyuan3DClient
-                import inspect
-
-                h3d_kwargs = {
-                    "comfyui_url": self.config.hunyuan3d.comfyui_url,
-                    "api_url": self.config.hunyuan3d.api_url,
-                    "quality": self.config.hunyuan3d.quality,
-                    "turbo": self.config.hunyuan3d.turbo,
-                    "timeout": self.config.hunyuan3d.timeout,
-                    "seed": self.config.hunyuan3d.seed,
-                }
-                sig = inspect.signature(Hunyuan3DClient.__init__)
-                if "multiview" in sig.parameters:
-                    h3d_kwargs["multiview"] = self.config.hunyuan3d.multiview
-                # Drop any kwargs the installed client version doesn't accept
-                # (e.g. 'turbo' is config-only on some versions) to avoid a
-                # TypeError that would crash this mesh strategy.
-                h3d_kwargs = {k: v for k, v in h3d_kwargs.items() if k in sig.parameters}
-
-                h3d = Hunyuan3DClient(**h3d_kwargs)
-                result = h3d.reconstruct_from_gaussians(ply_path)
-                if result.mesh is not None:
-                    result.mesh.export(str(mesh_glb_path))
-                    result.mesh.export(str(mesh_obj_path))
-                    vc = len(result.mesh.vertices)
-                    return {
-                        "label": label, "mesh": str(mesh_glb_path), "mesh_obj": str(mesh_obj_path),
-                        "ply": ply_path, "vertex_count": vc, "method": "hunyuan3d",
-                    }
-            except Exception as exc:
-                logger.warning("Hunyuan3D failed for '%s': %s", label, exc)
+        # (The old TRELLIS.2/Hunyuan3D splat-render branches lived here. They
+        # conditioned the generators on CPU re-renders of the segmented splat —
+        # the anti-pattern ADR-025 retired. Objects now go through
+        # _generate_object_from_crop above; only environment geometry follows.)
 
         # Strategy 2: TSDF
         try:
@@ -2480,6 +2559,126 @@ class PipelineStages:
 
         return None
 
+    def _object_placement_from_ply(self, ply_path: str) -> dict[str, Any] | None:
+        """Scene-frame placement hints from the object's gaussian subset.
+
+        The splat contributes pose/scale, never pixels (ADR-025 D3). Centroid
+        + extent seed the R10 pose-solve at USD assembly.
+        """
+        try:
+            points, _colors = _load_ply_points(ply_path)
+            if points is None or len(points) == 0:
+                return None
+            return {
+                "centroid": [float(v) for v in points.mean(axis=0)],
+                "extent": [float(v) for v in (points.max(axis=0) - points.min(axis=0))],
+                "gaussian_count": int(len(points)),
+            }
+        except Exception as exc:  # noqa: BLE001 — placement hints are best-effort
+            logger.warning("Placement extraction failed for %s: %s", ply_path, exc)
+            return None
+
+    def _generate_object_from_crop(
+        self,
+        label: str,
+        ply_path: str,
+        mesh_glb_path: Path,
+        crop_entry: dict[str, Any] | None,
+        provenance: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """ADR-025 object generation: ONE matted crop -> textured GLB.
+
+        Generator chain: TRELLIS.2 single-image (primary, ADR-015 as amended)
+        -> Hunyuan3D-2.1 single-image (the proven dreamlab graph). GLB bytes
+        are persisted byte-identical with a recorded sha256 (PRD v4 R6); a
+        ``<name>.lineage.json`` sits next to every asset. Raises on failure —
+        mesh_objects reports it; nothing is faked.
+        """
+        crop_path = Path(crop_entry["crop"]) if crop_entry and crop_entry.get("crop") else None
+        if crop_path is None or not crop_path.exists():
+            raise RuntimeError(
+                f"no object crop for '{label}' — the object_crops stage must "
+                "produce one (ADR-025: generators are conditioned on crops, "
+                "never splat renders)")
+
+        placement = self._object_placement_from_ply(ply_path)
+
+        def _persist(glb_data: bytes, method: str, lineage: dict[str, Any],
+                     glb_low: bytes | None = None,
+                     mesh: "Any | None" = None) -> dict[str, Any]:
+            import hashlib
+            mesh_glb_path.write_bytes(glb_data)
+            sha = hashlib.sha256(glb_data).hexdigest()
+            info: dict[str, Any] = {
+                "label": label,
+                "mesh": str(mesh_glb_path),
+                "ply": ply_path,
+                "vertex_count": 0 if mesh is None else len(mesh.vertices),
+                "method": method,
+                "generator": True,
+                "glb_sha256": sha,
+                "crop": str(crop_path),
+                "placement": placement,
+            }
+            if glb_low is not None:
+                low_path = mesh_glb_path.with_name(mesh_glb_path.stem + "_low.glb")
+                low_path.write_bytes(glb_low)
+                info["mesh_low"] = str(low_path)
+            lineage_path = mesh_glb_path.with_suffix(".lineage.json")
+            lineage_path.write_text(json.dumps({
+                **lineage, "glb_sha256": sha, "placement": placement,
+            }, indent=2, default=str), encoding="utf-8")
+            info["lineage"] = str(lineage_path)
+            return info
+
+        errors: list[str] = []
+
+        trellis2_cfg = getattr(self.config, "trellis2", None)
+        if trellis2_cfg is not None and getattr(trellis2_cfg, "enabled", False):
+            try:
+                from pipeline.trellis2_client import Trellis2Client
+                t2 = Trellis2Client.from_config(trellis2_cfg)
+                res = t2.reconstruct_from_image(
+                    crop_path, label=label, provenance=provenance)
+                if res.glb_data:
+                    logger.info("TRELLIS.2 object '%s': %d verts (%.0fs, %s)",
+                                label, res.vertex_count, res.duration_seconds,
+                                res.backend)
+                    return _persist(res.glb_data, "trellis2", res.lineage,
+                                    glb_low=res.glb_low_data, mesh=res.mesh)
+                errors.append(f"trellis2: {res.error or 'no GLB'}")
+            except Exception as exc:  # noqa: BLE001 — try the fallback generator
+                logger.warning("TRELLIS.2 failed for '%s': %s", label, exc)
+                errors.append(f"trellis2: {exc}")
+
+        if self.config.hunyuan3d.enabled:
+            try:
+                from pipeline.hunyuan3d_client import Hunyuan3DClient
+                h3d = Hunyuan3DClient.from_config(self.config.hunyuan3d)
+                res = h3d.reconstruct_from_image(
+                    crop_path, seed=self.config.hunyuan3d.seed, label=label)
+                if res.glb_data:
+                    logger.info("Hy3D21 object '%s': %d verts (%.0fs)",
+                                label, res.vertex_count, res.duration_seconds)
+                    lineage = {
+                        "conditioning": "single-image",
+                        "crop": str(crop_path),
+                        "generator": "Hunyuan3D-2.1",
+                        "executor": res.backend,
+                        "seed": self.config.hunyuan3d.seed,
+                        "surface": "observed-front/inferred-back",
+                        **({"source": provenance} if provenance else {}),
+                    }
+                    return _persist(res.glb_data, "hunyuan3d21", lineage,
+                                    mesh=res.mesh)
+                errors.append(f"hunyuan3d21: {res.error or 'no GLB'}")
+            except Exception as exc:  # noqa: BLE001 — reported below
+                logger.warning("Hy3D21 failed for '%s': %s", label, exc)
+                errors.append(f"hunyuan3d21: {exc}")
+
+        raise RuntimeError(
+            f"all generators failed for '{label}': " + "; ".join(errors or ["none enabled"]))
+
     # ------------------------------------------------------------------
     # Stage 9: Texture bake
     # ------------------------------------------------------------------
@@ -2508,8 +2707,19 @@ class PipelineStages:
         baker = TextureBaker(config=bake_cfg)
         baked_count = 0
 
+        skipped_generator = 0
         for mesh_info in meshes:
             label = mesh_info.get("label", "unknown")
+            # PRD v4 R6: generator GLBs (TRELLIS.2 / Hy3D21) already carry
+            # baked PBR materials and are persisted byte-identical. Re-unwrap
+            # + splat-projection here destroyed them (audit defect F7) —
+            # splat-projection baking is for TSDF/environment meshes only.
+            if mesh_info.get("generator") or mesh_info.get("method") in (
+                    "trellis2", "hunyuan3d21"):
+                skipped_generator += 1
+                logger.info("texture_bake: skipping generator mesh '%s' "
+                            "(PBR persisted verbatim)", label)
+                continue
             mesh_path = mesh_info.get("mesh_obj") or mesh_info.get("mesh")
             if not mesh_path or not Path(mesh_path).exists():
                 continue
@@ -2548,7 +2758,8 @@ class PipelineStages:
 
         return StageResult(
             success=True, stage="texture_bake",
-            metrics={"baked_count": baked_count, "total_meshes": len(meshes)},
+            metrics={"baked_count": baked_count, "total_meshes": len(meshes),
+                     "skipped_generator_meshes": skipped_generator},
             artifacts={
                 "textured_meshes": json.dumps(meshes),
             },

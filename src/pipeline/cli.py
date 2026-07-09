@@ -175,7 +175,17 @@ def cmd_video2scene(args: argparse.Namespace) -> int:
     all_artifacts.update(result.artifacts)
     objects_json = result.artifacts.get("objects", "[]")
 
-    # Stage 7: Extract objects
+    # Stage 6b: Object crops (ADR-025 — generator conditioning input)
+    print("\n--- Object Crops ---")
+    result = p.object_crops(frames_dir, objects=objects_json)
+    print(f"  {result.stage}: {'OK' if result.success else 'FAIL'} {result.metrics}")
+    if not result.success:
+        print(f"  Error: {result.error}", file=sys.stderr)
+        return 1
+    all_artifacts.update(result.artifacts)
+    crops_json = result.artifacts.get("object_crops", "[]")
+
+    # Stage 7: Extract objects (pose/scale only — never generator pixels)
     print("\n--- Extract Objects ---")
     result = p.extract_objects(ply_path, labels=objects_json)
     print(f"  {result.stage}: {'OK' if result.success else 'FAIL'} {result.metrics}")
@@ -187,7 +197,7 @@ def cmd_video2scene(args: argparse.Namespace) -> int:
 
     # Stage 8: Mesh objects
     print("\n--- Mesh Objects ---")
-    result = p.mesh_objects(object_plys)
+    result = p.mesh_objects(object_plys, crops=crops_json)
     print(f"  {result.stage}: {'OK' if result.success else 'FAIL'} {result.metrics}")
     if not result.success:
         print(f"  Error: {result.error}", file=sys.stderr)

@@ -895,6 +895,120 @@ class Hunyuan3DClient:
 
         return result
 
+    # ---------------------------------------------------------------
+    # Single-image generation — the proven Hy3D21 graph (ADR-025)
+    # ---------------------------------------------------------------
+
+    def _build_hy3d21_image_prompt(
+        self,
+        image_name: str,
+        out_name: str,
+        seed: int = 42,
+        steps: int = 25,
+        paint_steps: int = 10,
+        texture_size: int = 1024,
+    ) -> dict:
+        """The Hy3D21 graph that produced the validated dreamlab objects
+        (scripts/hy3d_turnaround.py), verbatim. Conditioning is ONE matted
+        crop; the 6-view pass inside is Hunyuan texture-painting its OWN
+        generated mesh — internal to the generator, not external multiview
+        conditioning (which ADR-025 retired)."""
+        return {
+            "14": {"class_type": "Hy3D21LoadImageWithTransparency",
+                   "inputs": {"image": image_name}},
+            "4": {"class_type": "Hy3D21VAELoader",
+                  "inputs": {"model_name": "Hunyuan3D-vae-v2-1-fp16.ckpt"}},
+            "37": {"class_type": "Hy3DMeshGenerator", "inputs": {
+                "model": "hunyuan3d-dit-v2-1-fp16.ckpt", "image": ["14", 0],
+                "steps": steps, "guidance_scale": 7.5, "seed": seed,
+                "attention_mode": "sdpa"}},
+            "9": {"class_type": "Hy3D21VAEDecode", "inputs": {
+                "vae": ["4", 0], "latents": ["37", 0], "box_v": 1.01,
+                "octree_resolution": 192, "num_chunks": 64000, "mc_level": 0.0,
+                "mc_algo": "mc", "enable_flash_vdm": True, "force_offload": True}},
+            "19": {"class_type": "Hy3D21CameraConfig", "inputs": {
+                "camera_azimuths": "0, 90, 180, 270, 0, 180",
+                "camera_elevations": "0, 0, 0, 0, 90, -90",
+                "view_weights": "1, 0.5, 1, 0.5, 1, 1", "ortho_scale": 1.1}},
+            "20": {"class_type": "Hy3D21MultiViewsGeneratorWithMetaData", "inputs": {
+                "trimesh": ["9", 0], "camera_config": ["19", 0], "view_size": 768,
+                "image": ["14", 0], "steps": paint_steps, "guidance_scale": 3.0,
+                "texture_size": texture_size, "unwrap_mesh": True, "seed": seed,
+                "output_name": out_name}},
+            "21": {"class_type": "Hy3DBakeMultiViewsWithMetaData", "inputs": {
+                "pipeline": ["20", 0], "albedo": ["20", 1], "mr": ["20", 2],
+                "metadata": ["20", 3]}},
+            "44": {"class_type": "Hy3D21ExportMesh", "inputs": {
+                "trimesh": ["21", 2], "filename_prefix": f"vitrine/{out_name}_object",
+                "file_format": "glb", "save_file": True}},
+        }
+
+    def reconstruct_from_image(
+        self,
+        image_path: str | Path,
+        seed: int = 42,
+        label: str = "object",
+        steps: int = 25,
+        paint_steps: int = 10,
+        texture_size: int = 1024,
+    ) -> Hunyuan3DResult:
+        """Single matted crop -> textured GLB via Hunyuan3D-2.1 (ADR-025 fallback).
+
+        The returned ``glb_data`` bytes are the artifact — persist verbatim,
+        never re-export through trimesh (PRD v4 R6).
+        """
+        image_path = Path(image_path)
+        if not image_path.exists():
+            raise FileNotFoundError(f"Crop not found: {image_path}")
+        safe = "".join(c if c.isalnum() else "_" for c in label)[:40] or "object"
+
+        t0 = time.monotonic()
+        uploaded = self._upload_image(image_path)
+        prompt = self._build_hy3d21_image_prompt(
+            uploaded, safe, seed=seed, steps=steps,
+            paint_steps=paint_steps, texture_size=texture_size,
+        )
+        prompt_id = self._submit_prompt(prompt)
+        logger.info("Submitted Hy3D21 single-image prompt %s for '%s'",
+                    prompt_id, label)
+        history = self._poll_completion(prompt_id)
+
+        result = Hunyuan3DResult(
+            backend="hunyuan3d-2.1-single-image",
+            prompt_id=prompt_id,
+            duration_seconds=time.monotonic() - t0,
+        )
+        # Hy3D21ExportMesh reports via history outputs; scan every ref that
+        # looks like a GLB (key shape varies across pack versions).
+        candidates: list[str] = []
+        for node_output in history.get("outputs", {}).values():
+            for items in node_output.values():
+                items = items if isinstance(items, list) else [items]
+                for item in items:
+                    if isinstance(item, str) and item.lower().endswith(".glb"):
+                        candidates.append(item)
+                    elif isinstance(item, dict):
+                        fn = item.get("filename") or item.get("model_file") or ""
+                        if fn.lower().endswith(".glb"):
+                            sub = item.get("subfolder", "")
+                            candidates.append(f"{sub}/{fn}" if sub else fn)
+        for filepath in candidates:
+            try:
+                data = self._download_file(filepath)
+                result.glb_data = data
+                result.output_paths[filepath] = filepath
+                result.mesh = self._load_glb(data)
+                if result.mesh is not None:
+                    logger.info("Hy3D21 object for '%s': %d verts, %d faces",
+                                label, result.vertex_count, result.face_count)
+                    break
+            except (FileNotFoundError, requests.RequestException) as e:
+                logger.warning("Could not download %s: %s", filepath, e)
+
+        if result.glb_data is None:
+            result.error = "No retrievable GLB in Hy3D21 outputs"
+        return result
+
     def reconstruct_from_gaussians(
         self,
         ply_path: str | Path,
@@ -903,7 +1017,13 @@ class Hunyuan3DClient:
         fallback_singleview: bool = True,
         work_dir: str | Path | None = None,
     ) -> Hunyuan3DResult:
-        """Main entry point: reconstruct mesh from Gaussian PLY.
+        """DEPRECATED (ADR-025): splat-render conditioning — do not use.
+
+        This path renders views FROM the object splat and feeds them to the
+        generator; the 2026-07-09 audit retired that conditioning mode, and
+        the workflow JSONs it submitted were deleted (calls now fail loudly at
+        workflow load). No pipeline stage calls this. Use
+        ``reconstruct_from_image`` with an object_crops crop instead.
 
         Tries multi-view first (4 canonical views rendered from the
         Gaussian representation), falling back to single-view if needed.
