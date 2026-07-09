@@ -217,3 +217,99 @@ def parse_points3d_txt(filepath: Path | str) -> List[ColmapPoint3D]:
             point2d_idxs=tuple(point2d_idxs),
         ))
     return points
+
+
+# ---------------------------------------------------------------------------
+#  Binary parsers (cameras.bin / images.bin)
+#
+#  The direct-COLMAP reconstruction path emits BINARY models only (rawcapdev
+#  layout: colmap/sparse/0/{cameras,images,points3D}.bin). Format per COLMAP's
+#  src/colmap/scene/reconstruction_io.cc. Only the fields the pipeline needs
+#  (intrinsics + poses) are decoded; 2D point tracks are skipped over.
+# ---------------------------------------------------------------------------
+
+# COLMAP camera model id -> (name, number of params).
+_CAMERA_MODELS = {
+    0: ("SIMPLE_PINHOLE", 3), 1: ("PINHOLE", 4), 2: ("SIMPLE_RADIAL", 4),
+    3: ("RADIAL", 5), 4: ("OPENCV", 8), 5: ("OPENCV_FISHEYE", 8),
+    6: ("FULL_OPENCV", 12), 7: ("FOV", 5), 8: ("SIMPLE_RADIAL_FISHEYE", 4),
+    9: ("RADIAL_FISHEYE", 5), 10: ("THIN_PRISM_FISHEYE", 12),
+}
+
+
+def parse_cameras_bin(filepath: Path | str) -> Dict[int, ColmapCamera]:
+    """Parse a COLMAP cameras.bin file into camera_id -> ColmapCamera."""
+    import struct
+
+    cameras: Dict[int, ColmapCamera] = {}
+    with open(filepath, "rb") as fh:
+        (num_cameras,) = struct.unpack("<Q", fh.read(8))
+        for _ in range(num_cameras):
+            camera_id, model_id = struct.unpack("<ii", fh.read(8))
+            width, height = struct.unpack("<QQ", fh.read(16))
+            name, num_params = _CAMERA_MODELS.get(model_id, (f"UNKNOWN_{model_id}", 4))
+            params = struct.unpack(f"<{num_params}d", fh.read(8 * num_params))
+            cameras[camera_id] = ColmapCamera(
+                camera_id=camera_id, model=name,
+                width=int(width), height=int(height), params=tuple(params),
+            )
+    return cameras
+
+
+def parse_images_bin(filepath: Path | str) -> List[ColmapImage]:
+    """Parse a COLMAP images.bin file (poses only; 2D tracks skipped)."""
+    import struct
+
+    images: List[ColmapImage] = []
+    with open(filepath, "rb") as fh:
+        (num_images,) = struct.unpack("<Q", fh.read(8))
+        for _ in range(num_images):
+            (image_id,) = struct.unpack("<i", fh.read(4))
+            qw, qx, qy, qz, tx, ty, tz = struct.unpack("<7d", fh.read(56))
+            (camera_id,) = struct.unpack("<i", fh.read(4))
+            name_bytes = bytearray()
+            while True:
+                ch = fh.read(1)
+                if ch in (b"\x00", b""):
+                    break
+                name_bytes.extend(ch)
+            (num_points2d,) = struct.unpack("<Q", fh.read(8))
+            fh.seek(24 * num_points2d, 1)   # (double x, double y, int64 p3d_id)
+            images.append(ColmapImage(
+                image_id=image_id, qw=qw, qx=qx, qy=qy, qz=qz,
+                tx=tx, ty=ty, tz=tz, camera_id=camera_id,
+                name=name_bytes.decode("utf-8", errors="replace"),
+            ))
+    return images
+
+
+# ---------------------------------------------------------------------------
+#  Format-agnostic model-directory loaders
+# ---------------------------------------------------------------------------
+
+def find_model_dir(root: Path | str) -> "Path | None":
+    """Locate a COLMAP sparse model (text OR binary) under a job/colmap root."""
+    root = Path(root)
+    for c in (root / "sparse" / "0", root / "sparse",
+              root / "undistorted" / "sparse" / "0",
+              root / "undistorted" / "sparse", root):
+        for ext in ("txt", "bin"):
+            if (c / f"images.{ext}").exists() and (c / f"cameras.{ext}").exists():
+                return c
+    return None
+
+
+def load_cameras(model_dir: Path | str) -> Dict[int, ColmapCamera]:
+    """Load cameras from a model dir, preferring text over binary."""
+    model_dir = Path(model_dir)
+    if (model_dir / "cameras.txt").exists():
+        return parse_cameras_txt(model_dir / "cameras.txt")
+    return parse_cameras_bin(model_dir / "cameras.bin")
+
+
+def load_images(model_dir: Path | str) -> List[ColmapImage]:
+    """Load image poses from a model dir, preferring text over binary."""
+    model_dir = Path(model_dir)
+    if (model_dir / "images.txt").exists():
+        return parse_images_txt(model_dir / "images.txt")
+    return parse_images_bin(model_dir / "images.bin")
