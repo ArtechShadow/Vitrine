@@ -309,6 +309,12 @@ class Trellis2Config:
     texture_size: int = 4096           # PBR texture resolution
     timeout: int = 1800                # TRELLIS.2 + PBR is slow; time is not a constraint
     seed: int = 42
+    # Quality-escalation ladder (ADR-025 D4 / PRD v4 R7). best_of_n > 1 runs
+    # that many seed re-rolls and keeps the candidate whose FRONT silhouette
+    # best matches the observed crop (+ mesh sanity); all candidate scores are
+    # recorded in the winner's lineage. Default 1 = single-shot (unchanged).
+    best_of_n: int = 1
+    seeds: list[int] = field(default_factory=list)  # explicit seeds; else derived
     ss_steps: int = 12                 # sparse-structure sampling steps
     shape_steps: int = 12              # shape diffusion steps
     tex_steps: int = 12                # texture diffusion steps

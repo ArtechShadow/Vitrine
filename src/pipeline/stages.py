@@ -2654,16 +2654,53 @@ class PipelineStages:
         if trellis2_cfg is not None and getattr(trellis2_cfg, "enabled", False):
             try:
                 from pipeline.trellis2_client import Trellis2Client
+                from pipeline import object_candidate_score as ocs
                 t2 = Trellis2Client.from_config(trellis2_cfg)
-                res = t2.reconstruct_from_image(
-                    crop_path, label=label, provenance=provenance)
-                if res.glb_data:
-                    logger.info("TRELLIS.2 object '%s': %d verts (%.0fs, %s)",
-                                label, res.vertex_count, res.duration_seconds,
-                                res.backend)
-                    return _persist(res.glb_data, "trellis2", res.lineage,
+
+                n = max(1, int(getattr(trellis2_cfg, "best_of_n", 1)))
+                seeds = ocs.derive_seeds(
+                    getattr(trellis2_cfg, "seed", 42), n,
+                    getattr(trellis2_cfg, "seeds", None))
+                crop_aspect = ocs.crop_aspect_from_provenance(provenance)
+
+                # Generate each seed; score by front-silhouette proportion +
+                # mesh sanity (R7). best_of_n==1 -> single shot, unchanged.
+                best = None
+                scoreboard: list[dict[str, Any]] = []
+                for seed in seeds:
+                    res = t2.reconstruct_from_image(
+                        crop_path, seed=seed, label=label, provenance=provenance)
+                    if not res.glb_data:
+                        errors.append(f"trellis2(seed={seed}): {res.error or 'no GLB'}")
+                        continue
+                    extent = list(res.mesh.extents) if (
+                        res.mesh is not None and getattr(res.mesh, "extents", None)
+                        is not None) else None
+                    watertight = bool(getattr(res.mesh, "is_watertight", False)) \
+                        if res.mesh is not None else False
+                    cs = ocs.score_candidate(
+                        seed, extent, crop_aspect, res.face_count, watertight)
+                    scoreboard.append(cs.__dict__)
+                    logger.info("TRELLIS.2 '%s' seed=%d: %d verts, score=%.3f "
+                                "(prop=%.2f sanity=%.2f)", label, seed,
+                                res.vertex_count, cs.total, cs.proportion, cs.sanity)
+                    if best is None or cs.total > best[0]:
+                        best = (cs.total, res)
+
+                if best is not None:
+                    _, res = best
+                    lineage = dict(res.lineage)
+                    if n > 1:
+                        lineage["best_of_n"] = n
+                        lineage["candidates"] = scoreboard
+                        lineage["selected_seed"] = next(
+                            (c["seed"] for c in scoreboard
+                             if c["total"] == max(s["total"] for s in scoreboard)),
+                            res.lineage.get("seed"))
+                    logger.info("TRELLIS.2 object '%s': kept best of %d (%.0fs)",
+                                label, len(scoreboard), res.duration_seconds)
+                    return _persist(res.glb_data, "trellis2", lineage,
                                     glb_low=res.glb_low_data, mesh=res.mesh)
-                errors.append(f"trellis2: {res.error or 'no GLB'}")
             except Exception as exc:  # noqa: BLE001 — try the fallback generator
                 logger.warning("TRELLIS.2 failed for '%s': %s", label, exc)
                 errors.append(f"trellis2: {exc}")

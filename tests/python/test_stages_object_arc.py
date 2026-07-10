@@ -145,7 +145,7 @@ def _stub_trellis2(monkeypatch, glb: bytes = GLB_BYTES):
     """Stub pipeline.trellis2_client at the module boundary."""
     res = types.SimpleNamespace(
         glb_data=glb, glb_low_data=b"low", mesh=None, vertex_count=0,
-        duration_seconds=1.0, backend="stub", error=None,
+        face_count=200_000, duration_seconds=1.0, backend="stub", error=None,
         lineage={"conditioning": "single-image", "generator": "TRELLIS.2-4B"},
     )
     client = MagicMock()
@@ -166,6 +166,68 @@ def test_mesh_objects_without_crop_fails_loudly(stages, monkeypatch):
     failures = json.loads(result.artifacts["mesh_failures"])
     assert failures[0]["label"] == "vase"
     assert "crop" in failures[0]["error"]
+
+
+def test_best_of_n_runs_n_seeds_and_keeps_best(stages, tmp_path, monkeypatch):
+    ply = _object_ply(stages, "vase")
+    crop = tmp_path / "0001_vase.png"
+    crop.write_bytes(b"\x89PNG-fake")
+    monkeypatch.setattr(stages.config.hunyuan3d, "enabled", False)
+    monkeypatch.setattr(stages.config.trellis2, "best_of_n", 3)
+
+    # Crops manifest with a SQUARE observed silhouette (bbox aspect 1.0), so the
+    # square seed-43 mesh matches the observation better than the squashed 42.
+    crops_dir = stages.job_dir / "object_crops"
+    crops_dir.mkdir(parents=True, exist_ok=True)
+    (crops_dir / "crops.json").write_text(json.dumps({
+        "version": "object_crops.1",
+        "crops": [{"label": "vase", "object_id": 1, "crop": str(crop),
+                   "bbox": [0, 0, 100, 100]}],   # w==h -> aspect 1.0
+        "failures": [],
+    }))
+
+    # Per-seed fake meshes: seed 43 has the "best" proportions + faces.
+    class _FakeMesh:
+        def __init__(self, extents, faces, wt):
+            self.extents = extents
+            self.faces = list(range(faces))
+            self.vertices = list(range(faces))
+            self.is_watertight = wt
+
+    profiles = {
+        42: ([0.3, 1.0, 1.0], 200_000, True),    # squashed
+        43: ([1.0, 1.0, 1.0], 300_000, True),    # square, healthy -> best
+        44: ([1.0, 1.0, 1.0], 100, False),       # degenerate
+    }
+    calls = []
+
+    def fake_recon(crop_path, seed=42, label="object", provenance=None):
+        ext, faces, wt = profiles[seed]
+        calls.append(seed)
+        return types.SimpleNamespace(
+            glb_data=GLB_BYTES + bytes([seed]), glb_low_data=None,
+            mesh=_FakeMesh(ext, faces, wt), vertex_count=faces, face_count=faces,
+            duration_seconds=1.0, backend="stub", error=None,
+            lineage={"conditioning": "single-image", "seed": seed})
+
+    client = MagicMock()
+    client.reconstruct_from_image.side_effect = fake_recon
+    mod = types.ModuleType("pipeline.trellis2_client")
+    mod.Trellis2Client = MagicMock()
+    mod.Trellis2Client.from_config.return_value = client
+    monkeypatch.setitem(sys.modules, "pipeline.trellis2_client", mod)
+
+    result = stages.mesh_objects(
+        [str(ply)], crops=[{"label": "vase", "object_id": 1, "crop": str(crop)}])
+    assert result.success
+    assert sorted(calls) == [42, 43, 44]          # all three seeds generated
+    mesh_info = json.loads(result.artifacts["meshes"])[0]
+    lineage = json.loads(Path(mesh_info["lineage"]).read_text())
+    assert lineage["best_of_n"] == 3
+    assert lineage["selected_seed"] == 43         # highest-scoring kept
+    assert len(lineage["candidates"]) == 3
+    # The persisted GLB is seed 43's bytes.
+    assert Path(mesh_info["mesh"]).read_bytes() == GLB_BYTES + bytes([43])
 
 
 def test_mesh_objects_persists_generator_glb_verbatim(stages, tmp_path, monkeypatch):
