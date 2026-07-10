@@ -27,6 +27,13 @@ _SRC = Path(__file__).resolve().parents[2] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+import os  # noqa: E402
+
+# These tests exercise the pure-logic stage methods (crops/isolation/placement
+# bookkeeping) with the GPU generators stubbed, so skip the torch/GPU preflight
+# in PipelineStages.__init__ — lets the suite run on a CPU CI runner.
+os.environ.setdefault("LFS_SKIP_PREFLIGHT", "1")
+
 from pipeline.config import PipelineConfig  # noqa: E402
 from pipeline.stages import PipelineStages, STAGE_NAMES  # noqa: E402
 

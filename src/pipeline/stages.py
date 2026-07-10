@@ -221,9 +221,17 @@ class PipelineStages:
         self.config = config or PipelineConfig()
         self.config.output_dir = str(self.job_dir)
 
-        # Pre-flight dependency check -- fail hard if critical deps are missing
-        from pipeline.preflight import check_all as preflight_check
-        self._preflight = preflight_check()
+        # Pre-flight dependency check -- fail hard if critical deps are missing.
+        # LFS_SKIP_PREFLIGHT=1 is a TEST-ONLY escape hatch so the pure-logic
+        # stage methods (crops/isolation/placement bookkeeping) can be unit-
+        # tested on a CPU CI runner without the torch/GPU stack. Production
+        # never sets it, so the fail-fast behaviour is unchanged; any stage that
+        # actually needs a GPU dep still raises loudly at its own import.
+        if os.environ.get("LFS_SKIP_PREFLIGHT") == "1":
+            self._preflight = {"skipped": True}
+        else:
+            from pipeline.preflight import check_all as preflight_check
+            self._preflight = preflight_check()
 
     # ------------------------------------------------------------------
     # Stage 1: Ingest
