@@ -65,11 +65,23 @@ if ! $PY -c "import drtk; from drtk.interpolate import interpolate" >/dev/null 2
   echo "[comfyui-entrypoint] drtk ABI mismatch vs installed torch — rebuilding drtk from source ..."
   DRTK_PATCH=/tmp/drtk_abi_patch; mkdir -p "$DRTK_PATCH"
   printf 'try:\n import torch.utils.cpp_extension as _c\n _c._check_cuda_version=lambda *a,**k:None\nexcept Exception:\n pass\n' > "$DRTK_PATCH/sitecustomize.py"
-  PYTHONPATH="$DRTK_PATCH:${PYTHONPATH:-}" TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-8.9}" \
-    $PY -m pip install --break-system-packages -q --force-reinstall --no-build-isolation --no-deps \
-    "git+https://github.com/facebookresearch/drtk.git" >/dev/null 2>&1 || true
-  $PY -c "import drtk; from drtk.interpolate import interpolate; print('[comfyui-entrypoint] drtk rebuilt from source OK')" 2>/dev/null \
-    || echo "[comfyui-entrypoint] WARNING: drtk still unavailable — TRELLIS.2 PBR texturing will fall back to untextured geometry"
+  # Retry the source build: the compile can fail transiently (transient network
+  # on the git+ fetch, a killed nvcc under VRAM pressure). A silent single-shot
+  # failure here left drtk ABI-broken and TRELLIS.2 PBR dying MID-generation
+  # (observed 2026-07-10, after minutes of wasted shape-stage compute), so we
+  # try twice before giving up — a cheap insurance against a costly late failure.
+  drtk_ok=0
+  for attempt in 1 2; do
+    PYTHONPATH="$DRTK_PATCH:${PYTHONPATH:-}" TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-8.9}" \
+      $PY -m pip install --break-system-packages -q --force-reinstall --no-build-isolation --no-deps \
+      "git+https://github.com/facebookresearch/drtk.git" >/dev/null 2>&1 || true
+    if $PY -c "import drtk; from drtk.interpolate import interpolate" >/dev/null 2>&1; then
+      echo "[comfyui-entrypoint] drtk rebuilt from source OK (attempt $attempt)"
+      drtk_ok=1; break
+    fi
+    echo "[comfyui-entrypoint] drtk rebuild attempt $attempt failed; retrying ..."
+  done
+  [ "$drtk_ok" = 1 ] || echo "[comfyui-entrypoint] ERROR: drtk still unavailable after 2 attempts — TRELLIS.2 PBR texturing WILL FAIL at Trellis2RasterizePBR (grep this line)"
 fi
 # Pure-python runtime deps the TRELLIS pipeline imports (utils3d needs --no-deps
 # to avoid a resolver conflict; the rest install clean).

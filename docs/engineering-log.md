@@ -2,6 +2,36 @@
 
 Development history for Vitrine (a standalone project that vendors LichtFeld Studio as a pinned tool; formerly a fork — see ADR-021).
 
+## 2026-07-10 — R7 best-of-N quality ladder + drtk self-heal hardened
+
+### R7 — best-of-N seed re-rolls with a silhouette-consistency scorer
+
+Single-shot generation was a quality ceiling; backside hallucination is
+ADR-025's stated #1 risk. `trellis2.best_of_n > 1` now runs N seed re-rolls
+and keeps the best (default 1 = unchanged). New pure module
+`object_candidate_score.py` scores each candidate by a deliberately modest,
+honest signal — a FRONT-silhouette proxy, not a full 3D metric: proportion
+agreement (mesh front aspect vs the crop's observed silhouette aspect, via
+`|log(ratio)|`, scale-invariant + symmetric) gated by mesh sanity (face-count
+floor + watertight bonus; a degenerate mesh scores 0). It does not directly
+detect backside hallucination (true multi-view scoring is future work) — it
+picks, among N seeds, the candidate most consistent with the one observation
+we have, and records EVERY candidate's score in the winner's lineage for
+human / R9 review. 8 scorer unit tests + a best-of-N selection stage test;
+validated in a clean CI-deps venv (99 passed) + container subset (162).
+
+### drtk self-heal hardened after a live PBR failure
+
+The R7 live proof surfaced a real infra fragility (NOT in the R7 code, which
+degraded correctly): ComfyUI's `drtk` was ABI-broken against torch 2.12
+(`Trellis2RasterizePBR` → `undefined symbol` mid-generation), even though an
+earlier run that day succeeded. The `comfyui_entrypoint.sh` self-heal rebuilds
+drtk from source but was a silent single shot (`|| true`), so a transient
+compile failure left PBR broken until the next restart — discovered only after
+minutes of wasted shape-stage compute. Hardened to **retry twice** with a
+loud, greppable ERROR on final failure. Rebuilt drtk in the live container to
+unblock the proof.
+
 ## 2026-07-10 — Mega-image rebuilt (gate + SPA baked) + R10 object pose-solve
 
 ### Image rebuild closed the last runtime security gap
