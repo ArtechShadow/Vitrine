@@ -13,8 +13,10 @@
 > deleted); R7 ◐ (seed param + lineage flags in place; ladder orchestration
 > pending); R8 ⏳ (note: Pixal3D is MIT — see ADR-025 amendment); R9 ✅
 > (harness + 3-object baseline committed, live run: vessel 492k faces/441s,
-> bottle 483k/158s, block 466k/130s, 0 regressions); R10 ⏳ (placement hints
-> recorded per asset; pose-solve at assembly pending). Proof assets:
+> bottle 483k/158s, block 466k/130s, 0 regressions); R10 ◐ (2026-07-10:
+> position + uniform scale SOLVED and applied at assembly via
+> `object_placement.py` → `usd/placements.json`; orientation flagged
+> `unsolved` — a crop-pose orientation solve remains). Proof assets:
 > `docs/renders/object-pipeline-2026-07-09/`.
 **Supersedes scope**: the object-generation half of [prd-v3-e2e-closure.md](prd-v3-e2e-closure.md)
 (selection + recovery); does **not** reopen ingest/provenance/annotation (v3 scope) or

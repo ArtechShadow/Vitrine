@@ -2,6 +2,38 @@
 
 Development history for Vitrine (a standalone project that vendors LichtFeld Studio as a pinned tool; formerly a fork — see ADR-021).
 
+## 2026-07-10 — Mega-image rebuilt (gate + SPA baked) + R10 object pose-solve
+
+### Image rebuild closed the last runtime security gap
+
+Rebuilt `gaussian-toolkit:latest` (`ed36b0bd26e6`, `BUILD_SPA=1`) and recreated
+the container. The LichtFeld builder + base layers cache-hit (binary intact,
+174 MB; no CUDA recompile), so only the tail rebuilt. Runtime-verified in the
+fresh container:
+- **ttyd gate is now LIVE** (gap #3): with the default `VITRINE_CLAUDE_ENABLED=0`
+  there is NO `:7681` listener — it had been an unconditional listener because
+  the *baked* `supervisord.conf` predated the gate. Both branches exercised
+  (disabled → exits; enabled → loopback ttyd, warns without a credential).
+- **ttyd/VNC second-factor paths baked** (gap #14): `VITRINE_TTYD_CREDENTIAL` +
+  `VITRINE_VNC_PASSWORD` present and wired.
+- **SPA baked** into `static/spa/` — retires the live-`docker cp` injection; a
+  fresh clone+build now serves the Vitrine SPA with no manual step.
+- All host publishes remain loopback-pinned (7860/7681/8188/8200/45677/5902).
+
+### R10 — object pose-solve at USD assembly (PRD v4)
+
+Generated GLBs are in TRELLIS's own normalized frame, so before this they
+assembled at the world origin at unit scale. New pure module
+`object_placement.py` solves position + uniform scale from the object's
+Gaussian subset (already in COLMAP-world coords): `scale = real_max_extent /
+glb_max_extent`, `translate = world_centroid`. `mesh_objects` records the GLB's
+own bbox (`glb_extent`); `assemble_usd` writes `usd/placements.json`; the
+standalone assembler applies translate + uniform scale (× SCENE_SCALE) when a
+placement exists, else the legacy self-centroid path. **Orientation is left
+identity and flagged `unsolved`** — the honest ADR-025 D3 posture (a full
+orientation solve from the crop pose + silhouette is future work). 8 new
+solver unit tests + a placements-emission stage test; pure math, no deps.
+
 ## 2026-07-09 (evening) — Security posture APPLIED live + hardening pass + `pipeline objects` CLI
 
 ### The live system was still LAN-open — now loopback-everywhere (verified)
