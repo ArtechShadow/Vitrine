@@ -2609,6 +2609,14 @@ class PipelineStages:
             import hashlib
             mesh_glb_path.write_bytes(glb_data)
             sha = hashlib.sha256(glb_data).hexdigest()
+            # The generated mesh's own normalized bbox — the denominator of the
+            # R10 pose-solve scale ratio (real size / normalized size).
+            glb_extent = None
+            if mesh is not None and getattr(mesh, "extents", None) is not None:
+                try:
+                    glb_extent = [float(v) for v in mesh.extents]
+                except (TypeError, ValueError):
+                    glb_extent = None
             info: dict[str, Any] = {
                 "label": label,
                 "mesh": str(mesh_glb_path),
@@ -2619,6 +2627,7 @@ class PipelineStages:
                 "glb_sha256": sha,
                 "crop": str(crop_path),
                 "placement": placement,
+                "glb_extent": glb_extent,
             }
             if glb_low is not None:
                 low_path = mesh_glb_path.with_name(mesh_glb_path.stem + "_low.glb")
@@ -2851,6 +2860,21 @@ class PipelineStages:
         usd_dir = self.job_dir / "usd"
         usd_dir.mkdir(parents=True, exist_ok=True)
         usd_path = usd_dir / "scene.usda"
+
+        # R10 pose-solve: emit per-object placement (world position + uniform
+        # scale from the object's Gaussian subset) for the standalone assembler
+        # to apply, so generated objects land at their real scene location/size
+        # instead of piled at the origin at unit scale. Orientation is flagged
+        # unsolved (ADR-025 D3). Best-effort — never blocks assembly.
+        try:
+            from pipeline.object_placement import build_placements
+            placements = build_placements(objects)
+            if placements:
+                (usd_dir / "placements.json").write_text(
+                    json.dumps(placements, indent=2), encoding="utf-8")
+                logger.info("R10: wrote placements for %d object(s)", len(placements))
+        except Exception as exc:  # noqa: BLE001 — placement is additive
+            logger.warning("R10 placement solve failed: %s", exc)
 
         # LichtFeld native USD export (scene.export_usd, v0.5.1+). Additive and
         # best-effort: produces an authoritative native scene USD alongside the

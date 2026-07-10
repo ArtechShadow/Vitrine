@@ -25,6 +25,7 @@ The script looks for:
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 import re
@@ -569,6 +570,18 @@ def assemble_scene(
     meshes = _find_meshes(job_dir)
     print(f"  Found {len(meshes)} mesh(es)")
 
+    # R10 pose-solve (PRD v4): per-object world placement + uniform scale for
+    # generated objects, written by the pipeline's assemble_usd stage. Absent
+    # for legacy runs -> fall back to the mesh-self-centroid placement below.
+    placements: Dict[str, Dict[str, Any]] = {}
+    placements_path = job_dir / "usd" / "placements.json"
+    if placements_path.exists():
+        try:
+            placements = json.loads(placements_path.read_text())
+            print(f"  Loaded R10 placements for {len(placements)} object(s)")
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"  Warning: could not read placements.json: {e}")
+
     # Gaussian PLY
     ply_path = _find_ply(job_dir)
     if ply_path:
@@ -627,8 +640,24 @@ def assemble_scene(
         prim = xform.GetPrim()
         Usd.ModelAPI(prim).SetKind(Kind.Tokens.component)
 
-        # Compute centroid from OBJ for positioning
-        if mesh_path_str and Path(mesh_path_str).exists():
+        # Positioning: prefer the R10 solved placement (real world position +
+        # uniform scale of a normalized generator mesh); else fall back to the
+        # mesh-self centroid (correct for world-frame OBJ meshes like the
+        # environment, meaningless for a normalized generator GLB).
+        placement = placements.get(label)
+        if placement is not None:
+            wc = placement.get("world_centroid", [0.0, 0.0, 0.0])
+            ux, uy, uz = colmap_to_usd_position(wc[0], wc[1], wc[2])
+            xform.AddTranslateOp().Set(Gf.Vec3d(ux, uy, uz))
+            # scale_ratio is in raw world units; USD positions carry SCENE_SCALE,
+            # so the object's size must be scaled by the same factor to match.
+            s = float(placement.get("scale_ratio", 1.0)) * SCENE_SCALE
+            xform.AddScaleOp().Set(Gf.Vec3f(s, s, s))
+            prim.SetCustomDataByKey("v2g:placement_orientation",
+                                    placement.get("orientation", "unsolved"))
+            prim.SetCustomDataByKey("v2g:placement_scale_ratio",
+                                    float(placement.get("scale_ratio", 1.0)))
+        elif mesh_path_str and Path(mesh_path_str).exists():
             cx, cy, cz = _compute_obj_centroid(Path(mesh_path_str))
             ux, uy, uz = colmap_to_usd_position(cx, cy, cz)
             xform.AddTranslateOp().Set(Gf.Vec3d(ux, uy, uz))

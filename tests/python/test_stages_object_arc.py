@@ -192,6 +192,33 @@ def test_mesh_objects_persists_generator_glb_verbatim(stages, tmp_path, monkeypa
 # R6 — texture_bake skips generator meshes
 # ---------------------------------------------------------------------------
 
+def test_assemble_usd_emits_r10_placements(stages, tmp_path, monkeypatch):
+    # Generator meshes with placement hints -> usd/placements.json (R10).
+    glb = tmp_path / "vase.glb"
+    glb.write_bytes(GLB_BYTES)
+    meshes = [
+        {"label": "full_scene", "mesh": str(glb)},              # no placement
+        {"label": "vase", "mesh": str(glb), "generator": True,
+         "placement": {"centroid": [1.0, 0.0, 2.0], "extent": [0.5, 0.5, 0.5]},
+         "glb_extent": [1.0, 1.0, 1.0]},
+    ]
+    # Stub the standalone assembler + Blender helper so the stage runs offline.
+    monkeypatch.setattr(stages, "_run_blender_assembler", lambda p: {"success": False})
+    import subprocess as _sp
+    monkeypatch.setattr(_sp, "run",
+                        lambda *a, **k: types.SimpleNamespace(returncode=1, stdout="", stderr=""))
+
+    result = stages.assemble_usd(meshes)
+    assert result.success
+    placements_file = stages.job_dir / "usd" / "placements.json"
+    assert placements_file.exists()
+    data = json.loads(placements_file.read_text())
+    assert set(data) == {"vase"}                                # full_scene excluded
+    assert data["vase"]["world_centroid"] == [1.0, 0.0, 2.0]
+    assert data["vase"]["scale_ratio"] == 0.5
+    assert data["vase"]["orientation"] == "unsolved"
+
+
 def test_texture_bake_skips_generator_meshes(stages, tmp_path, monkeypatch):
     # Stub the baker module so this test needs no xatlas/trimesh.
     baker_mod = types.ModuleType("pipeline.texture_baker")
