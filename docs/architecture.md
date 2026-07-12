@@ -103,7 +103,7 @@ graph TB
   subgraph GPU1["GPU 1 (RTX 6000 Ada, 48 GB)"]
     MILO["milo<br/>MILo radegs (SIGGRAPH 2025, GPU) + GaussianWrapping<br/>scripts at /opt/milo/milo; flat basename images<br/>CUDA 11.8, Python 3.10"]
     COME["come (gated INSTALL_COME=1; NOT running)<br/>CoMe (2026-04-22), CUDA 12.1, Python 3.10"]
-    UNREAL["unreal (overlay, optional, NOT started)<br/>UE 5.8 USD export + render<br/>captured color needs BAKED TEXTURE or VertexColor material<br/>(USD import drops displayColor; GLB import ignores COLOR_0)"]
+    UNREAL["unreal (optional overlay, off by default; validated 2026-06-21)<br/>UE 5.8 USD export + render<br/>captured color needs BAKED TEXTURE or VertexColor material<br/>(USD import drops displayColor; GLB import ignores COLOR_0)"]
   end
 
   AGENTLLM["agent-llm (host :8084)<br/>DiffusionGemma 26B-A4B (Q8_0, text-only)"]
@@ -211,7 +211,7 @@ The pipeline modules (`src/pipeline/stages.py`) are designed as independent, sta
 
 | Component | Version | Purpose |
 |-----------|---------|---------|
-| LichtFeld Studio | v0.5.2 (synced 2026-05-26) | 3DGS training + ImprovedGS+ densification, MCP server (70+ tools), native USD I/O |
+| LichtFeld Studio | v0.5.3 (pinned tag v0.5.3; if the upstream tag is unavailable at build time, the build falls back to the latest v0.5.x — reconcile with sota_registry) | 3DGS training + ImprovedGS+ densification, MCP server (70+ tools), native USD I/O |
 | COLMAP | 4.1.0 | Structure-from-Motion — option namespace is `--FeatureExtraction.*` / `--FeatureMatching.*` (not `--SiftExtraction.*`). `FeatureExtraction.type SIFT` on GPU = 100% reg; the ALIKED enum is invalid in this build and `ALIKED_LIGHTGLUE` needs the missing `libcudnn.so.9`. Use `--ImageReader.single_camera_per_folder` for mixed cameras; mkdir the colmap dir before `feature_extractor`. |
 | Open3D | 0.18+ | TSDF fusion, mesh processing |
 | MILo | latest (SIGGRAPH Asia 2025) | High-quality mesh extraction via radegs/GPU (milo sidecar; scripts at `/opt/milo/milo`, `MILO_DIR`; needs flat basename images in `undistorted/images/`) |
@@ -315,7 +315,7 @@ The `ModelLifecycleManager` hard-tier uses `docker stop` / `docker start` on `vi
 
 The owner `vitrine-comfyui` is pinned to a known-good state via the **Salad add-on control API** (`vitrine-comfyui:3001`) — an in-container control plane for model probe, download, and lifecycle, not a cloud service. The `RecoveryController` (a stateless helper the orchestrator invokes) runs a per-object loop:
 
-1. **Plan** — compose the FLUX.2-dev view-completion or TRELLIS.2 / Hunyuan3D-2.1 hull graph from a template, parameterised by object identity and the artifact report.
+1. **Plan** — compose the FLUX.2-dev recovery graph or the TRELLIS.2 / Hunyuan3D-2.1 SINGLE-image object graph (ADR-025 — conditioning is the object_crops matte, never splat renders) from a template, parameterised by object identity and the artifact report.
 2. **Submit** — `POST /prompt` (graph API); poll `/history/{id}`; fetch outputs.
 3. **Evaluate** — scores the generated image or mesh render against object identity and artifact criteria. This step is *visual*, so it needs the staged gemma-4 vision fallback (or the `claude_code` backend) — text-only DiffusionGemma cannot see and handles only the planning/reasoning around it.
 4. **Decide** — `accept` | `re-prompt` (adjust denoise/guidance/seed/mask, bounded retry budget) | `veto` (unrecoverable). Every attempt is annotated in the per-video ledger; nothing is silently dropped.
@@ -338,7 +338,7 @@ Fallbacks remain available (TSDF, SIFT, Hunyuan3D-2.1, FLUX.1-Fill) behind capab
 
 A self-contained UE 5.8 overlay lives at the top-level `unreal/` directory: `unreal/engine/` (the UE 5.8 Linux installed build, ~73 GB, gitignored, bind-mounted read-only at `UE_ROOT=/opt/ue`), `unreal/runtime/` (`Vitrine.uproject`, `entrypoint.sh`, `import_and_render.py`, `import_usd_stage.py`, `mcp_bridge.py`), `unreal/Dockerfile.unreal`, and `unreal/docker-compose.unreal.yml`.
 
-The image (`vitrine-unreal:5.8`, ~6.15 GB, **built**) builds **from an NVIDIA CUDA base** (`nvidia/cuda:12.8.1-runtime-ubuntu22.04`) plus UE Linux runtime prereqs — it no longer needs Epic GitHub-org access or a `ghcr.io/epicgames` pull. Status: image built and the MCP bridge tested on the shared docker network; the overlay is **not started yet** (editor smoke-test pending). It is an optional downstream overlay — the pipeline does not wait on it; its USD output is the contract.
+The image (`vitrine-unreal:5.8`, ~6.15 GB, **built**) builds **from an NVIDIA CUDA base** (`nvidia/cuda:12.8.1-runtime-ubuntu22.04`) plus UE Linux runtime prereqs — it no longer needs Epic GitHub-org access or a `ghcr.io/epicgames` pull. Status: **optional overlay, off by default (validated 2026-06-21; started only when the unreal compose overlay is brought up)**. It is an optional downstream overlay — the pipeline does not wait on it; its USD output is the contract.
 
 - GPU 1. Ports: 30010 Web Remote Control (unicast, **primary** control path, container-friendly), 8000 first-party UE MCP (experimental HTTP+SSE, secondary), 9100 `unreal/runtime/mcp_bridge.py` via the `unreal-mcp-bridge` container.
 - Rendering: Lumen via `-RenderOffscreen` (Linux/Vulkan); `-nullrhi` for GPU-less import/assemble. Path Tracer is Windows/DX12-only and out of scope.

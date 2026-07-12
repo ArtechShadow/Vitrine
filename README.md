@@ -65,10 +65,10 @@ router, the option matrix, and the research behind each choice — lives in
 | Stage | What runs |
 |---|---|
 | **Ingest + QA** | DNG/HEIC decode (camera-WB) → MUSIQ NR-IQA + full-res Laplacian sharpest-per-window selection |
-| **Structure** | COLMAP SfM (ALIKED + LightGlue) |
+| **Structure** | COLMAP SfM (SIFT; ALIKED+LightGlue target — see work-order) |
 | **3DGS** | LichtFeld native trainer (vendored, `igs+`) / CoMe / gsplat |
 | **Scene → splat** | LichtFeld `.ply` → SuperSplat clean → **NanoGS** (UE 5.8, real Gaussians) |
-| **Scene → mesh** | **2DGS / PGSR** (SOTA surface) or TSDF → texture-bake (xatlas) → FBX |
+| **Scene → mesh** | 2DGS / PGSR (research target; shipped surface backends: TSDF, CoMe/MILo) → texture-bake (xatlas) → FBX |
 | **Objects** | SAM3 concept-segment → **TRELLIS.2** image→3D (primary) / Hunyuan3D-2.1 / SAM3D → 4096 PBR-textured GLB → FBX |
 | **Enhancers** *(capture-conditional)* | ArtiFixer (floaters/holes) · deblur · densification |
 | **Delivery** | UE 5.8 game-asset import (Nanite); embed object FBXs in the room; proxy collision; in-browser `.ksplat` viewer |
@@ -106,7 +106,9 @@ keeper renders: [`docs/renders/rawcapdev-2026-07-02/`](docs/renders/rawcapdev-20
 
 ## Agentic internal controller
 
-Vitrine is moving from scripted stages to an **internal agent controller** that owns the run end-to-end:
+Vitrine is moving from scripted stages to an **internal agent controller** that owns the run end-to-end
+(today that controller is the **Claude Code CLI subprocess**, driven by `CLAUDE_CONTAINER.md`, not yet a
+bespoke orchestrator class):
 
 ```mermaid
 flowchart TD
@@ -173,21 +175,36 @@ UE Remote Control `:30010` · UE MCP `:8000` · bridge `:9100`.
 
 Vitrine is designed to pass institutional IT review and to hold sensitive or unpublished collections safely.
 
-- **Single hardened mono-image.** One consolidated Docker image is the entire runtime — auditable as a unit,
-  reproducible, and air-gappable. No per-tool cloud calls in the reconstruction path.
-- **Loopback-only, SSH-tunnel access (ADR-022).** The web control surface binds `127.0.0.1:7860` by default
-  and is reached only via `ssh -N -L 7860:localhost:7860`. Host port publishing is pinned to `127.0.0.1`, so
-  the LAN never sees the service; cross-container access is an explicit opt-in, never the default.
-- **Least-privilege isolation.** Internal virtual-env + OS-user separation so heavier or third-party tooling
-  runs without read access to secrets (HF token, model keys, Claude session) — those are readable only by the
-  service user.
+- **Primary hardened image + sidecars.** `gaussian-toolkit` is one primary hardened image, but it is not the
+  entire runtime: the GPU-1 batch sidecars (`milo`, `come`, ArtiFixer), `vitrine-comfyui` (stood up separately
+  via `scripts/run_comfyui.sh`), and the optional Unreal overlay (`unreal` / `unreal-mcp-bridge`) run as their
+  own containers/images. Auditable per-image; no per-tool cloud calls in the reconstruction path.
+- **Loopback-only, SSH-tunnel access (ADR-022, hardened by ADR-024).** The web control surface binds
+  `127.0.0.1:7860` and is reached only via `ssh -N -L 7860:localhost:7860`. Until 2026-07-09 that loopback
+  pinning only actually covered `:7860` — ttyd `:7681`, ComfyUI `:8188`, LichtFeld MCP `:45677` and VNC `:5902`
+  were published on `0.0.0.0`. As of ADR-024, **all** host port publishes are pinned to `127.0.0.1`, so the LAN
+  never sees any service; every surface is reachable only via SSH tunnel, and cross-container access is an
+  explicit opt-in, never the default.
+- **Least-privilege isolation — target, not yet implemented (ADR-022 D2).** The design calls for internal
+  virtual-env + OS-user separation so heavier or third-party tooling runs without read access to secrets (HF
+  token, model keys, Claude session). Today all processes share a single `ubuntu` user (ComfyUI runs as
+  `root`) and secrets are container-wide environment variables — tracked as an open gap in
+  [`docs/security-gap-register.md`](docs/security-gap-register.md).
+- **Internal-Claude enablement gate (ADR-024).** By default `VITRINE_CLAUDE_ENABLED=0`: the web upload +
+  runtime-feedback panel on `:7860` is the **only** operator I/O, the in-container Claude terminal is not
+  started, and the pipeline does not auto-launch Claude Code. Setting `VITRINE_CLAUDE_ENABLED=1` enables the
+  internal Claude intelligence — terminal access plus full pipeline/model/code/container control and its own
+  web access.
 - **Data sovereignty.** Captures, splats, meshes and lineage stay on the institution's own hardware; nothing
   is uploaded to third-party SaaS.
 - **Auditable provenance.** Every asset carries `v2g:*` lineage metadata (source capture, method, counts,
   world placement) into the game-engine scene.
 
-Design record: [`research/decisions/adr-022-*`](research/decisions/) (secure single-image architecture) and
-[`research/decisions/adr-023-*`](research/decisions/) (web consolidation + security analysis).
+Known gaps are tracked adversarially in [`docs/security-gap-register.md`](docs/security-gap-register.md).
+
+Design record: [`research/decisions/adr-022-*`](research/decisions/) (secure single-image architecture),
+[`research/decisions/adr-023-*`](research/decisions/) (web consolidation + security analysis), and
+[`research/decisions/adr-024-*`](research/decisions/) (loopback host-publish pinning + Claude enablement gate).
 
 ## LichtFeld as a vendored tool
 
@@ -283,11 +300,15 @@ Prerequisites and the full build are in [`docs/build/`](docs/build/). Common ent
 
 ```bash
 git clone --recurse-submodules <this-repo>                  # pulls the vendored LichtFeld tool
-docker compose -f docker-compose.consolidated.yml up -d     # bring up the stack
-ssh -N -L 7860:localhost:7860 <user>@<rig>                  # then open http://localhost:7860 (ADR-022: loopback-only)
+docker compose -f docker-compose.consolidated.yml up -d     # bring up the stack (VITRINE_CLAUDE_ENABLED=0 by default — see below)
+ssh -N -L 7860:localhost:7860 <user>@<rig>                  # then open http://localhost:7860 (ADR-022/ADR-024: loopback-only)
 scripts/run_comfyui.sh                                       # owner ComfyUI (TRELLIS.2 / Hunyuan3D / SAM3D)
 python -m pipeline.sota_registry check                       # SOTA preflight (weights/VRAM/pins)
 ```
+
+By default `VITRINE_CLAUDE_ENABLED=0`: no in-container Claude terminal, no auto-launched Claude Code. Set
+`VITRINE_CLAUDE_ENABLED=1` (e.g. `VITRINE_CLAUDE_ENABLED=1 docker compose -f docker-compose.consolidated.yml up -d`)
+to opt into the internal Claude intelligence (ADR-024).
 
 ## License
 

@@ -24,6 +24,7 @@ Everything under `vendor/lichtfeld-studio/` belongs to the LichtFeld-Studio proj
 - **Never push to or open PRs against the upstream repository.**
 - To update: change the submodule pin to the target tag, run `git submodule update --init --recursive`, rebuild, test.
 - The submodule is consumed in Docker by building LichtFeld from source inside the image; the resulting binary and MCP server are the integration surface.
+  > ⚠️ As of the 2026-07-09 audit the consolidated Dockerfile still clones the legacy fork (masked by `|| true`); the vendored-submodule build is the intended path but is not yet the one the image build uses. Tracked in `docs/security-gap-register.md` / master-audit #3.
 
 ### Vitrine's own code
 

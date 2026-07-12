@@ -89,6 +89,21 @@ def _patch_sam3_addmm_dtype() -> None:
     logger.info("Applied SAM3 addmm_act bf16 dtype-regression patch (sam3 #507).")
 
 
+def _to_pil(image: np.ndarray):
+    """HWC uint8 RGB numpy -> PIL, for Sam3Processor.set_image.
+
+    THE R1 boxes-not-silhouettes fix (PRD v4): the processor's numpy branch
+    reads ``height, width = image.shape[-2:]`` — correct for CHW tensors,
+    but an HWC frame yields height=W, width=3(channels). Detection still
+    works (the model input conversion handles HWC), yet every output mask is
+    interpolated to a Wx3 grid and boxes are scaled by (3, W) — which
+    downstream resizing smeared into the notorious "coarse boxes". The PIL
+    branch reads ``image.size`` and is unambiguous.
+    """
+    from PIL import Image
+    return Image.fromarray(image)
+
+
 @dataclass(frozen=True, slots=True)
 class ConceptSegmentationResult:
     """Per-concept segmentation output from text-prompted SAM3.
@@ -255,8 +270,8 @@ class SAM3Segmentor:
         try:
             # The fused addmm_act bf16 regression (sam3 #507) is patched at model
             # load by _patch_sam3_addmm_dtype(); this forward runs in the image's
-            # native (float32) dtype.
-            state = processor.set_image(image)
+            # native (float32) dtype. PIL input is REQUIRED — see _to_pil.
+            state = processor.set_image(_to_pil(image))
             state = processor.set_text_prompt(concept_text, state)
         finally:
             if confidence_threshold is not None:
@@ -378,7 +393,7 @@ class SAM3Segmentor:
             processor.confidence_threshold = confidence_threshold
 
         try:
-            state = processor.set_image(image)
+            state = processor.set_image(_to_pil(image))
             state = processor.set_text_prompt(exemplar_concept, state)
         finally:
             if confidence_threshold is not None:

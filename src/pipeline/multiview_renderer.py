@@ -1,11 +1,13 @@
 # SPDX-FileCopyrightText: 2026 LichtFeld Studio Authors
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Multi-view renderer for Gaussian Splatting objects.
+"""Multi-view renderer for Gaussian Splatting objects — PREVIEW/DIAGNOSTIC ONLY.
 
-Renders N views from optimal camera positions around an object's
-Gaussian representation. Output RGBA images are suitable for feeding
-into Hunyuan3D 2.0 multi-view conditioning.
+ADR-025: splat renders are never fed to a 3D generator as conditioning (the
+retired ADR-015/017 panel path). This CPU renderer is retained for previews
+and diagnostics; output is straight-alpha RGBA (un-premultiplied, audit
+defect F4 fixed). It is pure-Python and O(N) per view — do not put it on a
+hot path.
 
 The renderer operates on PLY files containing 3DGS data (positions,
 opacities, SH coefficients, covariances) and produces clean RGBA
@@ -740,8 +742,14 @@ def render_gaussians(
         depth_mask = (contrib > 0.01) & (depth_map[y_min:y_max, x_min:x_max] >= config.far)
         depth_map[y_min:y_max, x_min:x_max][depth_mask] = z_val
 
-    # Convert to RGBA uint8
-    rgb = np.clip(image * 255, 0, 255).astype(np.uint8)
+    # Convert to RGBA uint8, UN-premultiplying the accumulated color (audit
+    # defect F4: the composited buffer is alpha-weighted; without dividing by
+    # alpha the object reads as a near-black ghost wherever coverage is soft).
+    # This renderer is preview/diagnostic-only under ADR-025 — straight alpha
+    # keeps those previews honest.
+    safe_alpha = np.maximum(alpha_acc, 1e-6)[..., None]
+    rgb = np.clip((image / safe_alpha) * 255, 0, 255).astype(np.uint8)
+    rgb[alpha_acc < 1e-6] = 0
     alpha_u8 = np.clip(alpha_acc * 255, 0, 255).astype(np.uint8)
     rgba = np.dstack([rgb, alpha_u8])
 

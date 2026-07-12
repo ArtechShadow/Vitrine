@@ -369,6 +369,10 @@ ENV MILO_CONDA_ENV=milo
 # ---------------------------------------------------------------------------
 COPY docker/entrypoint.sh /opt/entrypoint.sh
 RUN chmod +x /opt/entrypoint.sh
+# Internal-Claude terminal gate (ADR-024). Baked so a plain image build (without
+# the compose bind-mount) still defaults to the terminal-disabled posture.
+COPY docker/vitrine-terminal.sh /opt/vitrine-terminal.sh
+RUN chmod +x /opt/vitrine-terminal.sh
 
 # ---------------------------------------------------------------------------
 # Environment variables

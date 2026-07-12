@@ -35,11 +35,15 @@ Video File (.mp4/.mov)
     │   2D masks → 3D Gaussian labels via batched voting
     │   98.3% coverage, 33 objects, 7.3 min
     │
-    ▼ [Stage 6: Per-Object Hull Creation]
-    │   Primary: TRELLIS.2 multiview shape+texture diffusion → PBR-textured GLB
-    │           (FLUX.2 view completion upstream)
-    │   Fallback: Hunyuan3D-2.1 multi-view → textured mesh
-    │   Fallback: TSDF fusion → watertight mesh (22K verts, 49K faces)
+    ▼ [Stage 5b: Object Crops]  (ADR-025)
+    │   Best-frame selection → SAM-matte crop ≥1024² + provenance
+    │   The ONLY generator conditioning — splat contributes pose/scale, never pixels
+    │
+    ▼ [Stage 6: Per-Object Generation]
+    │   Primary: TRELLIS.2 SINGLE-image shape+texture diffusion → PBR GLB
+    │            (bytes persisted verbatim, sha256 + lineage sidecar)
+    │   Fallback: Hunyuan3D-2.1 single-image (proven Hy3D21 graph)
+    │   Environment (full_scene) only: gsplat-TSDF geometry chain
     │
     ▼ [Stage 7: Background Recovery]
     │   FLUX inpainting via ComfyUI (:8188)
@@ -163,24 +167,17 @@ python3 -m src.pipeline.mask_projector \
     --output /output/my_scene/objects/
 ```
 
-### 6. Per-Object Hull Creation
+### 6. Per-Object Generation (ADR-025: single-image)
 
 ```bash
-# Primary: TRELLIS.2 (orbit render → FLUX.2 view completion → multiview shape+texture
-#          diffusion → PBR-textured GLB)
+# Primary: TRELLIS.2 single-image (object_crops matte → shape+texture diffusion
+#          → PBR GLB persisted verbatim)
 python3 scripts/run_hull_e2e.py \
-    --object-ply /output/my_scene/objects/object_001.ply \
-    --output /output/my_scene/hulls/object_001/
+    /output/my_scene/object_crops/0001_label.png label
 
-# Fallback: Hunyuan3D-2.1 (multi-view to textured mesh)
-python3 -m src.pipeline.hunyuan3d_client \
-    --object-ply /output/my_scene/objects/object_001.ply \
-    --output /output/my_scene/meshes/object_001/
-
-# Fallback: TSDF mesh (watertight)
-python3 scripts/run_tsdf_mesh.py \
-    --input /output/my_scene/objects/ \
-    --output /output/my_scene/meshes/
+# Fallback: Hunyuan3D-2.1 single-image (Hy3D21 graph) — invoked automatically by
+# mesh_objects when TRELLIS.2 fails; or grade any GLB with the eval harness:
+python3 eval/objects/run_eval.py --stats-only /output/my_scene/objects/meshes/label/label.glb
 ```
 
 ### 7. Background Inpainting via FLUX
@@ -253,8 +250,10 @@ lfs-mcp call scene.export_html '{"path":"/output/viewer.html"}'
 
 Mesh backends in detail:
 
-- **Per-object hulls** — TRELLIS.2 is the primary path (PBR-textured GLB via FLUX.2 view
-  completion → multiview shape+texture diffusion); Hunyuan3D-2.1 is the textured-mesh
-  fallback; TSDF fusion is the watertight last-resort fallback.
+- **Per-object generation** — TRELLIS.2 single-image is the primary path (one matted
+  best-frame crop from the `object_crops` stage → shape+texture diffusion → PBR GLB,
+  bytes persisted verbatim); Hunyuan3D-2.1 single-image (the proven Hy3D21 graph) is the
+  fallback. There is NO geometry-from-partial-splat fallback for objects (ADR-025 —
+  failures are reported, not faked); the TSDF chain applies to the environment only.
 - **Environment mesh** — CoMe is the default (gated) backend, with MILo, GaussianWrapping,
   and TSDF as fallbacks.

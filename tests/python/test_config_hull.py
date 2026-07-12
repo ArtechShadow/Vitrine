@@ -74,11 +74,24 @@ class TestTrellis2ConfigDefaults:
     def test_seed_default(self):
         assert self.cfg.seed == 42
 
-    def test_render_size_default(self):
-        assert self.cfg.render_size == 512
+    def test_single_image_step_defaults(self):
+        # ADR-025: single-image conditioning knobs replace the retired
+        # splat-render fields (render_size / camera_distance).
+        assert self.cfg.ss_steps == 12
+        assert self.cfg.shape_steps == 12
+        assert self.cfg.tex_steps == 12
 
-    def test_camera_distance_default(self):
-        assert self.cfg.camera_distance == 2.5
+    def test_high_low_face_count_defaults(self):
+        assert self.cfg.face_count_high == 500_000
+        assert self.cfg.face_count_low == 20_000
+
+    def test_native_url_defaults_to_comfyui_executor(self):
+        assert self.cfg.native_url == ""
+
+    def test_splat_render_fields_are_gone(self):
+        # Their reappearance would signal the retired conditioning creeping back.
+        assert not hasattr(self.cfg, "render_size")
+        assert not hasattr(self.cfg, "camera_distance")
 
 
 # ---------------------------------------------------------------------------
@@ -89,8 +102,10 @@ class TestViewCompletionConfigDefaults:
     def setup_method(self):
         self.cfg = ViewCompletionConfig()
 
-    def test_enabled_default_true(self):
-        assert self.cfg.enabled is True
+    def test_enabled_default_false(self):
+        # ADR-025 retired FLUX panel completion from the object arc; the
+        # dataclass survives only for config-load compatibility.
+        assert self.cfg.enabled is False
 
     def test_comfyui_url_default(self):
         assert self.cfg.comfyui_url == "http://vitrine-comfyui:8188"
@@ -154,13 +169,20 @@ class TestFromDictTrellis2:
         cfg = self._round_trip({"timeout": 3600})
         assert cfg.trellis2.timeout == 3600
 
-    def test_round_trips_render_size_override(self):
-        cfg = self._round_trip({"render_size": 256})
-        assert cfg.trellis2.render_size == 256
+    def test_round_trips_native_url_override(self):
+        cfg = self._round_trip({"native_url": "http://127.0.0.1:8402"})
+        assert cfg.trellis2.native_url == "http://127.0.0.1:8402"
 
-    def test_round_trips_camera_distance_override(self):
-        cfg = self._round_trip({"camera_distance": 3.0})
-        assert cfg.trellis2.camera_distance == pytest.approx(3.0)
+    def test_round_trips_face_count_overrides(self):
+        cfg = self._round_trip({"face_count_high": 100_000, "face_count_low": 5_000})
+        assert cfg.trellis2.face_count_high == 100_000
+        assert cfg.trellis2.face_count_low == 5_000
+
+    def test_legacy_splat_render_keys_ignored(self):
+        """Old config JSONs with the retired ADR-015 fields must still load."""
+        cfg = self._round_trip({"render_size": 256, "camera_distance": 3.0})
+        assert isinstance(cfg.trellis2, Trellis2Config)
+        assert not hasattr(cfg.trellis2, "render_size")
 
     def test_unrecognised_field_ignored(self):
         """Unknown fields in the dict must not raise."""
@@ -240,7 +262,8 @@ class TestDefaultRoundTrip:
         assert restored.trellis2.texture_size == original.trellis2.texture_size
         assert restored.trellis2.seed == original.trellis2.seed
         assert restored.trellis2.timeout == original.trellis2.timeout
-        assert restored.trellis2.render_size == original.trellis2.render_size
+        assert restored.trellis2.native_url == original.trellis2.native_url
+        assert restored.trellis2.face_count_high == original.trellis2.face_count_high
 
     def test_view_completion_defaults_survive_round_trip(self):
         original = PipelineConfig()

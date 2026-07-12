@@ -45,7 +45,8 @@ Gaussian Toolkit integrates multiple components into a unified 3D Gaussian Splat
 └────────────────┬──────────────────────────────────────┘
                  │ unreal/docker-compose.unreal.yml overlay
 ┌────────────────▼──────────────────────────────────────┐
-│  unreal (GPU 1, optional overlay, not started yet)    │
+│  unreal (GPU 1, optional overlay, off by default;     │
+│  validated 2026-06-21)                                │
 │  vitrine-unreal:5.8 USD scenegraph export + render     │
 │  + unreal-mcp-bridge :9100                             │
 └───────────────────────────────────────────────────────┘
@@ -64,7 +65,7 @@ Gaussian Toolkit integrates multiple components into a unified 3D Gaussian Splat
 | SplatReady | 1.0.0 | Plugin | Video-to-COLMAP pipeline automation |
 | SAM3 | latest | Apache-2.0 | Concept segmentation (4M concepts, text+visual prompts) |
 | SAM2 | hiera-large | Apache-2.0 | Video segmentation (fallback, validated) |
-| TRELLIS.2-4B | 4B | MIT | **Primary** per-object hull (multiview shape+texture diffusion → PBR GLB) |
+| TRELLIS.2-4B | 4B | MIT | **Primary** per-object generator (SINGLE-image shape+texture diffusion → PBR GLB, ADR-025) |
 | Hunyuan3D-2.1 | 2.1 | Tencent-community | Per-object hull **fallback** (multi-view to textured mesh) |
 | ComfyUI | latest | GPL-3.0 | Node-based workflow engine (FLUX.2 / TRELLIS.2 / Hunyuan3D-2.1 / SAM3D) |
 | FLUX.2-dev | dev | Non-commercial | View completion + inpaint/background recovery (Qwen-Image-Edit = commercial-safe alt) |
@@ -105,10 +106,13 @@ Trained 3D Gaussian Splat Model (1M gaussians)
     │   2D masks → 3D Gaussian labels (98.3% coverage)
     │   33 per-object PLY files extracted
     │
-    ▼ [Stage 6: Per-Object Hull Creation]
-    │   orbit render → coverage gate → FLUX.2 view completion
-    │   → TRELLIS.2-4B multiview shape+texture diffusion → PBR GLB (primary)
-    │   Hunyuan3D-2.1 fallback; TSDF floor fallback: Open3D fusion
+    ▼ [Stage 5b: Object Crops]  (ADR-025 — generator conditioning)
+    │   best-frame selection → SAM-matte crop ≥1024² + provenance
+    │
+    ▼ [Stage 6: Per-Object Generation]
+    │   TRELLIS.2-4B SINGLE-image shape+texture diffusion → PBR GLB (primary,
+    │   bytes persisted verbatim); Hunyuan3D-2.1 single-image fallback
+    │   (objects fail loudly — no geometry-from-partial-splat fakes)
     │
     ▼ [Stage 7: Environment Mesh + Background Recovery]
     │   CoMe env mesh (MILo / GaussianWrapping / TSDF fallbacks)
@@ -184,7 +188,8 @@ The pipeline runs as a multi-container stack: the main container, a dedicated ow
 ┌────────────────▼────────────────────────────────────────┐
 │  unreal (GPU 1) — vitrine-unreal:5.8, optional overlay   │
 │  UE 5.8 USD scenegraph export + render (image built;     │
-│  overlay not started yet). + unreal-mcp-bridge :9100     │
+│  overlay validated 2026-06-21, off by default).           │
+│  + unreal-mcp-bridge :9100                                │
 │  Web Remote Control :30010 (primary), UE MCP :8000 (exp) │
 └─────────────────────────────────────────────────────────┘
 ```

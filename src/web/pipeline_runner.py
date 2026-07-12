@@ -167,6 +167,18 @@ def _launch_claude_code(
     Reads the API key from the persistent volume. If no key is stored,
     returns False (the user must run Claude Code manually via the terminal).
     """
+    # Internal-Claude enablement gate (ADR-024). Unless the operator opted in at
+    # setup (VITRINE_CLAUDE_ENABLED=1), the in-container Claude intelligence is
+    # OFF: never auto-launch Claude Code. The job stays queued and the only
+    # operator surface is the web upload + runtime-feedback panel.
+    _enabled = str(os.environ.get("VITRINE_CLAUDE_ENABLED", "0")).strip().lower()
+    if _enabled not in ("1", "true", "yes", "on"):
+        logger.info(
+            "VITRINE_CLAUDE_ENABLED is not set — internal Claude disabled; "
+            "skipping auto-launch (job queued, web panel remains the only I/O)."
+        )
+        return False
+
     # Check for API key or OAuth session. Either is sufficient — a Claude
     # subscription login (OAuth, provisioned via the web terminal) overrides
     # the need for an Anthropic API key. Don't auto-launch with no auth at all;

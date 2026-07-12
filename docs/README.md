@@ -11,13 +11,17 @@ separate scheduled follow-up (ADR-015).
 
 The documentation is built using [Docusaurus](https://docusaurus.io/), a modern static website generator.
 
-## v3 Architecture (Proposed)
+## v3 Architecture — Largely Implemented
 
-The v3 design introduces a single-manifest, agent-orchestrated pipeline. Key new pages:
+The v3 design introduces a single-manifest, agent-orchestrated pipeline. Most of it is built and
+shipped, validated end-to-end on the rawcapdev run (2026-07-02). Key new pages:
 
-- [Vitrine Onboarding](onboarding.md) — the user-facing entry point: wizard, hardware selection, secret containment, and hand-off to the Claude Code overseer.
+- [Vitrine Onboarding](onboarding.md) — the user-facing entry point. The Rust/Axum wizard binary is
+  implemented and serves the manifest today, but only a minimal route surface is wired; the fuller
+  schema-driven forms, hardware probe, and OAuth/provisioning flow described on that page remain
+  design-only.
 - [v3 Pipeline Design](architecture/v3-pipeline.md) — `v2g-net`, `exhibit.toml`, serial model lifecycle, and agent-controlled ComfyUI recovery.
-- [Architecture overview](architecture.md) — existing v2 deployment plus a clearly-marked v3 section.
+- [Architecture overview](architecture.md) — the v3 End-to-End Architecture section (largely implemented).
 - [Scene-mesh refinement + ArtiFixer trial](scene-mesh-refinement.md) — approaches, issues, results, figures.
 
 ## Prerequisites

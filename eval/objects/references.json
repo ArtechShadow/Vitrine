@@ -1,0 +1,80 @@
+{
+  "0001_metal_container": {
+    "bytes": 54723340,
+    "sha256": "f8af1932335cc523debcbca94c55fdc013990d51551904920d134521a9cee044",
+    "vertices": 285782,
+    "faces": 492107,
+    "watertight": false,
+    "bbox_extents": [
+      0.989,
+      0.8607,
+      0.9976
+    ],
+    "has_material": true,
+    "material_type": "PBRMaterial",
+    "has_uv": true,
+    "duration_s": 441.3,
+    "turntable": [
+      "/data/output/eval_objects/0001_metal_container_turntable/view_00.png",
+      "/data/output/eval_objects/0001_metal_container_turntable/view_01.png",
+      "/data/output/eval_objects/0001_metal_container_turntable/view_02.png",
+      "/data/output/eval_objects/0001_metal_container_turntable/view_03.png",
+      "/data/output/eval_objects/0001_metal_container_turntable/view_04.png",
+      "/data/output/eval_objects/0001_metal_container_turntable/view_05.png",
+      "/data/output/eval_objects/0001_metal_container_turntable/view_06.png",
+      "/data/output/eval_objects/0001_metal_container_turntable/view_07.png"
+    ]
+  },
+  "0002_bottle": {
+    "bytes": 52836296,
+    "sha256": "9f25999a021cde1e00c4fa876797de15bcc0f69777fea270cfb699f164036a17",
+    "vertices": 306148,
+    "faces": 483178,
+    "watertight": false,
+    "bbox_extents": [
+      0.4026,
+      0.8984,
+      0.2748
+    ],
+    "has_material": true,
+    "material_type": "PBRMaterial",
+    "has_uv": true,
+    "duration_s": 158.0,
+    "turntable": [
+      "/data/output/eval_objects/0002_bottle_turntable/view_00.png",
+      "/data/output/eval_objects/0002_bottle_turntable/view_01.png",
+      "/data/output/eval_objects/0002_bottle_turntable/view_02.png",
+      "/data/output/eval_objects/0002_bottle_turntable/view_03.png",
+      "/data/output/eval_objects/0002_bottle_turntable/view_04.png",
+      "/data/output/eval_objects/0002_bottle_turntable/view_05.png",
+      "/data/output/eval_objects/0002_bottle_turntable/view_06.png",
+      "/data/output/eval_objects/0002_bottle_turntable/view_07.png"
+    ]
+  },
+  "0003_wooden_block": {
+    "bytes": 53134796,
+    "sha256": "c27f82a8ed84175a1a73a8ecc65c1f05bf2d6515325c120970141b1f662eb3c4",
+    "vertices": 258753,
+    "faces": 466038,
+    "watertight": false,
+    "bbox_extents": [
+      0.9885,
+      0.5965,
+      0.218
+    ],
+    "has_material": true,
+    "material_type": "PBRMaterial",
+    "has_uv": true,
+    "duration_s": 129.7,
+    "turntable": [
+      "/data/output/eval_objects/0003_wooden_block_turntable/view_00.png",
+      "/data/output/eval_objects/0003_wooden_block_turntable/view_01.png",
+      "/data/output/eval_objects/0003_wooden_block_turntable/view_02.png",
+      "/data/output/eval_objects/0003_wooden_block_turntable/view_03.png",
+      "/data/output/eval_objects/0003_wooden_block_turntable/view_04.png",
+      "/data/output/eval_objects/0003_wooden_block_turntable/view_05.png",
+      "/data/output/eval_objects/0003_wooden_block_turntable/view_06.png",
+      "/data/output/eval_objects/0003_wooden_block_turntable/view_07.png"
+    ]
+  }
+}

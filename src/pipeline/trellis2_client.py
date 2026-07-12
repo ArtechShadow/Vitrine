@@ -1,29 +1,40 @@
 # SPDX-FileCopyrightText: 2026 LichtFeld Studio Authors
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""TRELLIS.2-4B client for image-to-3D hull reconstruction via ComfyUI.
+"""TRELLIS.2-4B client — SINGLE-image object generation (ADR-025).
 
-TRELLIS.2 is the ADR-015 designated-primary hull backend (MIT, full PBR). This
-client mirrors the Hunyuan3D client's plumbing: it renders 4 canonical views
-(front/left/back/right) from a per-object Gaussian PLY, feeds them through the
-ComfyUI-TRELLIS2 multiview pipeline (DINOv3 conditioning -> shape diffusion ->
-PBR texture diffusion -> rasterize), and returns a textured GLB.
+The generator is conditioned on one clean, matted best-frame crop from the
+``object_crops`` stage. Splat renders are never used as conditioning (the
+2026-07-09 audit + upstream microsoft/TRELLIS.2#103 showed multi-image panel
+conditioning underperforms a single clean image; official TRELLIS.2 is
+single-image only). The splat contributes pose/scale at USD assembly.
 
-Runtime-verified 2026-06-20 (produces geometry + PBR-textured GLBs). The node's
-CUDA extensions, DINOv3 weights, and the RasterizePBR cv2 patch are installed by
-``scripts/comfyui_entrypoint.sh``; see ``research/decisions/adr-015-...md`` and
-``docs/engineering-log.md``.
+Two executors, selected by config:
+
+* ``native_url`` set — thin HTTP service wrapping the native TRELLIS.2
+  pipeline (``scripts/trellis2_native_service.py``): ``run(image)`` +
+  ``to_glb`` x2 (high/low poly, PBR bake). Preferred (PRD v4 R5).
+* ``native_url`` empty — the ComfyUI single-image workflow
+  (``trellis2_single_image_pbr.json``) on the runtime-verified node pack.
+  Interim executor until the native service env is stood up; ComfyUI is
+  otherwise 2D-only (ADR-014 as narrowed by ADR-025).
+
+The returned GLB bytes are the artifact: callers persist them verbatim
+(hash-recorded) and must not re-export through trimesh (PRD v4 R6 — the old
+re-export path silently discarded the PBR material).
 
 Usage::
 
     from pipeline.trellis2_client import Trellis2Client
     client = Trellis2Client(comfyui_url="http://vitrine-comfyui:8188")
-    result = client.reconstruct_from_gaussians("object.ply")
-    result.mesh.export("hull.glb")
+    result = client.reconstruct_from_image("object_crops/0001_vase.png")
+    Path("vase.glb").write_bytes(result.glb_data)
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import logging
 import tempfile
@@ -35,38 +46,34 @@ from typing import Any, Optional
 import requests
 import trimesh
 
-from .multiview_renderer import MultiViewRenderer, RenderConfig
-
 logger = logging.getLogger(__name__)
 
 WORKFLOW_DIR = Path(__file__).parent / "workflows"
-TRELLIS2_MV_WORKFLOW = WORKFLOW_DIR / "trellis2_multiview_pbr.json"
+TRELLIS2_SI_WORKFLOW = WORKFLOW_DIR / "trellis2_single_image_pbr.json"
 
-# Placeholder tokens substituted in the workflow template (cf. the JSON). The
-# full-360 panel set: equatorial front/left/back/right + top/bottom caps, mapped
-# to Trellis2MultiViewImageToShape's named slots so the whole object surface
-# (incl. top face + underside) is reconstructed, not just the front.
-_VIEW_PLACEHOLDERS = {
-    "front": "FRONT_IMAGE_PLACEHOLDER",
-    "left": "LEFT_IMAGE_PLACEHOLDER",
-    "back": "BACK_IMAGE_PLACEHOLDER",
-    "right": "RIGHT_IMAGE_PLACEHOLDER",
-    "top": "TOP_IMAGE_PLACEHOLDER",
-    "bottom": "BOTTOM_IMAGE_PLACEHOLDER",
-}
+_CROP_PLACEHOLDER = "CROP_IMAGE_PLACEHOLDER"
 
 
 @dataclass
 class Trellis2Result:
-    """Result of a TRELLIS.2 hull reconstruction."""
+    """Result of a TRELLIS.2 single-image object generation.
+
+    ``glb_data`` is the generator's PBR GLB byte-for-byte; ``mesh`` is a
+    trimesh view of it for stats/placement only — never re-export it.
+    """
     mesh: Optional[trimesh.Trimesh] = None
     glb_data: Optional[bytes] = None
-    backend: str = "trellis2-4b-mv-pbr"
-    views_rendered: int = 0
+    glb_low_data: Optional[bytes] = None   # decimated game-res pair (native service)
+    backend: str = "trellis2-4b-single-image"
     duration_seconds: float = 0.0
     prompt_id: str = ""
     output_paths: dict[str, str] = field(default_factory=dict)
+    lineage: dict[str, Any] = field(default_factory=dict)
     error: Optional[str] = None
+
+    @property
+    def glb_sha256(self) -> str:
+        return hashlib.sha256(self.glb_data).hexdigest() if self.glb_data else ""
 
     @property
     def vertex_count(self) -> int:
@@ -85,64 +92,77 @@ class Trellis2Result:
 
 
 class Trellis2Client:
-    """Client for TRELLIS.2-4B hull generation via the ComfyUI-TRELLIS2 nodes.
+    """Client for TRELLIS.2-4B single-image object generation.
 
     Parameters
     ----------
     comfyui_url : str
-        Native ComfyUI URL (e.g. ``http://vitrine-comfyui:8188``).
+        ComfyUI URL for the interim executor (e.g. ``http://vitrine-comfyui:8188``).
+    native_url : str
+        Native-pipeline service URL (``scripts/trellis2_native_service.py``).
+        Empty selects the ComfyUI workflow.
     timeout : int
-        Maximum seconds to wait for a generation (TRELLIS.2 + texture is slow;
-        time-to-output is not a constraint on the reference host).
-    poll_interval : float
-        Seconds between history polls.
+        Maximum seconds per generation.
     resolution : str
         ``LoadTrellis2Models`` resolution: ``512`` | ``1024`` | ``1024_cascade``
         | ``1536_cascade`` (max fidelity, default).
     texture_size : int
-        PBR rasterize texture resolution (default 4096).
+        PBR texture resolution (default 4096).
     seed : int
-        Generation seed.
+        Generation seed (re-rolls are the first escalation rung, PRD v4 R7).
+    ss_steps / shape_steps / tex_steps : int
+        Sampling steps for the sparse-structure / shape / texture stages.
+    face_count_high / face_count_low : int
+        Remesh targets for the high-poly artifact and (native service only)
+        the decimated low-poly pair.
     """
 
     def __init__(
         self,
         comfyui_url: str = "http://vitrine-comfyui:8188",
+        native_url: str = "",
         timeout: int = 1800,
         poll_interval: float = 2.0,
         resolution: str = "1536_cascade",
         texture_size: int = 4096,
         seed: int = 42,
-        render_size: int = 512,
-        camera_distance: float = 2.5,
+        ss_steps: int = 12,
+        shape_steps: int = 12,
+        tex_steps: int = 12,
+        face_count_high: int = 500_000,
+        face_count_low: int = 20_000,
         workflow_path: str | Path | None = None,
     ):
         self.comfyui_url = comfyui_url.rstrip("/")
+        self.native_url = native_url.rstrip("/") if native_url else ""
         self.timeout = timeout
         self.poll_interval = poll_interval
         self.resolution = resolution
         self.texture_size = texture_size
         self.seed = seed
-        self.render_size = render_size
-        self.camera_distance = camera_distance
-        self.workflow_path = Path(workflow_path) if workflow_path else TRELLIS2_MV_WORKFLOW
+        self.ss_steps = ss_steps
+        self.shape_steps = shape_steps
+        self.tex_steps = tex_steps
+        self.face_count_high = face_count_high
+        self.face_count_low = face_count_low
+        self.workflow_path = Path(workflow_path) if workflow_path else TRELLIS2_SI_WORKFLOW
         self.session = requests.Session()
-        self._renderer: MultiViewRenderer | None = None
-        # Optional generative view completion (ADR-017): fills unobserved panels
-        # via FLUX.2 before hull reconstruction. Set by stages.py when enabled.
-        self.view_completer: Any = None
 
     @classmethod
     def from_config(cls, cfg: Any) -> "Trellis2Client":
         """Construct from a Trellis2Config, reading every field defensively."""
         return cls(
             comfyui_url=getattr(cfg, "comfyui_url", "http://vitrine-comfyui:8188"),
+            native_url=getattr(cfg, "native_url", ""),
             timeout=getattr(cfg, "timeout", 1800),
             resolution=getattr(cfg, "resolution", "1536_cascade"),
             texture_size=getattr(cfg, "texture_size", 4096),
             seed=getattr(cfg, "seed", 42),
-            render_size=getattr(cfg, "render_size", 512),
-            camera_distance=getattr(cfg, "camera_distance", 2.5),
+            ss_steps=getattr(cfg, "ss_steps", 12),
+            shape_steps=getattr(cfg, "shape_steps", 12),
+            tex_steps=getattr(cfg, "tex_steps", 12),
+            face_count_high=getattr(cfg, "face_count_high", 500_000),
+            face_count_low=getattr(cfg, "face_count_low", 20_000),
         )
 
     # ------------------------------------------------------------------
@@ -151,7 +171,10 @@ class Trellis2Client:
 
     def health_check(self) -> bool:
         try:
-            r = self.session.get(f"{self.comfyui_url}/system_stats", timeout=10)
+            if self.native_url:
+                r = self.session.get(f"{self.native_url}/health", timeout=10)
+            else:
+                r = self.session.get(f"{self.comfyui_url}/system_stats", timeout=10)
             return r.status_code == 200
         except requests.RequestException:
             return False
@@ -213,19 +236,18 @@ class Trellis2Client:
 
     def _free_vram(self) -> None:
         """POST /free to unload models + free VRAM (serial lifecycle, ADR-013).
-        Called after the hull so TRELLIS.2 (~24GB) is unloaded before the next
-        object — and so a preceding FLUX.2 view-completion stage (~51GB) cannot
-        co-reside with the hull on a single 48GB GPU. With 2x48GB the generative
-        and hull stages can instead be split across GPUs (a 2nd ComfyUI on GPU1);
-        this /free is the single-instance safety net. Best-effort, never raises."""
+        Best-effort, never raises. No-op for the native service (it manages its
+        own lifecycle)."""
+        if self.native_url:
+            return
         try:
             self.session.post(
                 f"{self.comfyui_url}/free",
                 json={"unload_models": True, "free_memory": True}, timeout=30,
             )
-            logger.info("freed ComfyUI VRAM after TRELLIS.2 hull")
+            logger.info("freed ComfyUI VRAM after TRELLIS.2 generation")
         except requests.RequestException as e:  # noqa: BLE001
-            logger.warning("free_vram after hull failed: %s", e)
+            logger.warning("free_vram failed: %s", e)
 
     def _download_file(self, filename: str, subfolder: str = "") -> bytes:
         for file_type in ("output", "temp"):
@@ -269,6 +291,7 @@ class Trellis2Client:
         return refs
 
     def _load_glb(self, data: bytes) -> Optional[trimesh.Trimesh]:
+        """Trimesh view of a GLB for stats/placement — NOT for re-export."""
         with tempfile.NamedTemporaryFile(suffix=".glb", delete=False) as tmp:
             tmp.write(data)
             tmp.flush()
@@ -283,132 +306,102 @@ class Trellis2Client:
         return None
 
     # ------------------------------------------------------------------
-    # Rendering + workflow construction
+    # Workflow construction (ComfyUI executor)
     # ------------------------------------------------------------------
 
-    def _get_renderer(self) -> MultiViewRenderer:
-        if self._renderer is None:
-            self._renderer = MultiViewRenderer(RenderConfig(
-                image_size=self.render_size,
-                num_views=6,
-                azimuth_preset="trellis_6",   # full-360: F/L/B/R + top + bottom caps
-                fov_deg=49.13,
-                camera_distance=self.camera_distance,
-                sh_degree=3,
-                center_object=True,
-                scale_to_unit=True,
-            ))
-        return self._renderer
-
-    def _render_and_save_views(self, ply_path: Path, work_dir: Path) -> dict[str, Path]:
-        renderer = self._get_renderer()
-        views = renderer.render(ply_path, output_dir=work_dir)
-        view_map: dict[str, Path] = {}
-        for v in views:
-            label = v.camera.label
-            if label in _VIEW_PLACEHOLDERS:
-                view_map[label] = work_dir / f"{label}.png"
-        # Backfill any missing view with the front view (TRELLIS tolerates fewer views).
-        front = view_map.get("front")
-        if front is None and views:
-            front = work_dir / f"{views[0].camera.name}.png"
-        for label in _VIEW_PLACEHOLDERS:
-            if label not in view_map and front is not None:
-                view_map[label] = front
-        return view_map
-
-    def _build_prompt(self, uploaded: dict[str, str], seed: int, label: str) -> dict:
+    def _build_prompt(self, uploaded_name: str, seed: int, label: str) -> dict:
         with open(self.workflow_path) as f:
             prompt = json.load(f)
         prompt = {k: v for k, v in prompt.items() if not k.startswith("_")}
 
-        # Substitute the per-view uploaded filenames into the LoadImage nodes.
         for node in prompt.values():
             ins = node.get("inputs", {})
-            for view, token in _VIEW_PLACEHOLDERS.items():
-                if ins.get("image") == token:
-                    ins["image"] = uploaded[view]
+            if ins.get("image") == _CROP_PLACEHOLDER:
+                ins["image"] = uploaded_name
 
-        # Apply runtime parameters defensively (node ids per trellis2_multiview_pbr.json).
+        # Runtime parameters (node ids per trellis2_single_image_pbr.json).
         if "1" in prompt:
             prompt["1"]["inputs"]["resolution"] = self.resolution
-        for nid in ("40", "50", "60"):
-            if nid in prompt and "seed" in prompt[nid]["inputs"]:
-                prompt[nid]["inputs"]["seed"] = seed
-        if "60" in prompt and "texture_size" in prompt["60"]["inputs"]:
+        if "40" in prompt:
+            prompt["40"]["inputs"].update({
+                "seed": seed,
+                "ss_sampling_steps": self.ss_steps,
+                "shape_sampling_steps": self.shape_steps,
+            })
+        if "45" in prompt:
+            prompt["45"]["inputs"]["target_face_count"] = self.face_count_high
+        if "50" in prompt:
+            prompt["50"]["inputs"].update({
+                "seed": seed, "tex_sampling_steps": self.tex_steps,
+            })
+        if "60" in prompt:
             prompt["60"]["inputs"]["texture_size"] = self.texture_size
         if "70" in prompt:
-            prompt["70"]["inputs"]["filename_prefix"] = f"vitrine_hull_{label}"
+            prompt["70"]["inputs"]["filename_prefix"] = f"vitrine_object_{label}"
         return prompt
 
     # ------------------------------------------------------------------
-    # Public reconstruction entry point
+    # Executors
     # ------------------------------------------------------------------
 
-    def reconstruct_from_gaussians(
-        self,
-        ply_path: str | Path,
-        seed: int | None = None,
-        work_dir: str | Path | None = None,
-        label: str = "object",
-        object_desc: dict | None = None,
-    ) -> Trellis2Result:
-        """Reconstruct a textured hull GLB from a per-object Gaussian PLY.
+    def _generate_native(self, image_path: Path, seed: int, label: str) -> Trellis2Result:
+        """POST the crop to the native-pipeline service (PRD v4 R5).
 
-        When ``view_completer`` is set (ADR-017), unobserved panels (the splat
-        lacked that side) are generatively completed via FLUX.2 before the hull
-        is built, so a partial capture still yields a full-360 reconstruction.
+        Contract (scripts/trellis2_native_service.py): multipart ``image`` +
+        form params; JSON response ``{glb_high_b64, glb_low_b64?, lineage}``.
         """
-        ply_path = Path(ply_path)
-        if not ply_path.exists():
-            raise FileNotFoundError(f"PLY not found: {ply_path}")
-        seed = self.seed if seed is None else seed
-        safe = "".join(c if c.isalnum() else "_" for c in label)[:40] or "object"
-
         t0 = time.monotonic()
-        if work_dir is None:
-            work_dir = Path(tempfile.mkdtemp(prefix="trellis2_"))
-        else:
-            work_dir = Path(work_dir)
-            work_dir.mkdir(parents=True, exist_ok=True)
+        with open(image_path, "rb") as f:
+            r = self.session.post(
+                f"{self.native_url}/generate",
+                files={"image": (image_path.name, f, "image/png")},
+                data={
+                    "seed": str(seed),
+                    "resolution": self.resolution,
+                    "texture_size": str(self.texture_size),
+                    "ss_steps": str(self.ss_steps),
+                    "shape_steps": str(self.shape_steps),
+                    "tex_steps": str(self.tex_steps),
+                    "face_count_high": str(self.face_count_high),
+                    "face_count_low": str(self.face_count_low),
+                    "label": label,
+                },
+                timeout=self.timeout,
+            )
+        r.raise_for_status()
+        payload = r.json()
+        result = Trellis2Result(
+            backend="trellis2-native-single-image",
+            duration_seconds=time.monotonic() - t0,
+            lineage=payload.get("lineage", {}),
+        )
+        if payload.get("glb_high_b64"):
+            result.glb_data = base64.b64decode(payload["glb_high_b64"])
+            result.mesh = self._load_glb(result.glb_data)
+        if payload.get("glb_low_b64"):
+            result.glb_low_data = base64.b64decode(payload["glb_low_b64"])
+        if result.glb_data is None:
+            result.error = payload.get("error", "native service returned no GLB")
+        return result
 
-        logger.info("TRELLIS.2 hull reconstruction: %s (%s/%d)",
-                    ply_path.name, self.resolution, self.texture_size)
+    def _generate_comfyui(self, image_path: Path, seed: int, label: str) -> Trellis2Result:
+        """Run the single-image workflow on ComfyUI (interim executor)."""
+        t0 = time.monotonic()
         # Begin from a clean GPU (serial lifecycle): a prior stage/run that
-        # crashed or was killed before its own /free leaves stale models
-        # resident, which OOMs this run. Freeing up front makes the stage robust
-        # to upstream leakage, not just to its own cleanup.
+        # crashed before its own /free leaves stale models resident.
         self._free_vram()
-        view_paths = self._render_and_save_views(ply_path, work_dir)
 
-        # ADR-017: generatively complete unobserved panels (coverage-gated) so a
-        # partial capture still reconstructs a full 360. Best-effort — on any
-        # failure (e.g. FLUX.2 not staged) fall back to the raw splat renders.
-        if self.view_completer is not None:
-            try:
-                vc = self.view_completer.complete(
-                    view_paths, object_desc=object_desc or {"label": label},
-                    work_dir=work_dir / "completed", size=self.render_size,
-                )
-                view_paths = vc.views
-                if vc.synthesised:
-                    logger.info("View completion: synthesised %s; kept %s",
-                                vc.synthesised, vc.kept)
-            except Exception as e:  # noqa: BLE001
-                logger.warning("View completion failed (%s); using raw renders", e)
-
-        uploaded = {name: self._upload_image(p) for name, p in view_paths.items()}
-
-        prompt = self._build_prompt(uploaded, seed=seed, label=safe)
+        uploaded = self._upload_image(image_path)
+        prompt = self._build_prompt(uploaded, seed=seed, label=label)
         prompt_id = self._submit_prompt(prompt)
-        logger.info("Submitted TRELLIS.2 prompt %s", prompt_id)
+        logger.info("Submitted TRELLIS.2 single-image prompt %s", prompt_id)
 
         history = self._poll_completion(prompt_id)
         elapsed = time.monotonic() - t0
         logger.info("TRELLIS.2 completed in %.1fs", elapsed)
 
         result = Trellis2Result(
-            views_rendered=len(view_paths),
+            backend="trellis2-comfyui-single-image",
             duration_seconds=elapsed,
             prompt_id=prompt_id,
         )
@@ -419,17 +412,62 @@ class Trellis2Client:
                 result.output_paths[f"{sub}/{fname}" if sub else fname] = fname
                 result.mesh = self._load_glb(data)
                 if result.mesh is not None:
-                    logger.info("Loaded TRELLIS.2 hull: %d verts, %d faces",
+                    logger.info("Loaded TRELLIS.2 object: %d verts, %d faces",
                                 result.vertex_count, result.face_count)
                     break
             except (FileNotFoundError, requests.RequestException) as e:
                 logger.warning("Could not download %s/%s: %s", sub, fname, e)
 
-        if result.mesh is None:
+        if result.glb_data is None:
             result.error = "No retrievable GLB in TRELLIS.2 outputs"
             logger.warning("TRELLIS.2: %s (history outputs scanned)", result.error)
 
-        # Serial lifecycle: free the hull models so the next object (or stage)
-        # has full VRAM headroom. The view-completer already freed FLUX.2.
+        # Serial lifecycle: free the models so the next object has full VRAM.
         self._free_vram()
+        return result
+
+    # ------------------------------------------------------------------
+    # Public entry point
+    # ------------------------------------------------------------------
+
+    def reconstruct_from_image(
+        self,
+        image_path: str | Path,
+        seed: int | None = None,
+        label: str = "object",
+        provenance: dict | None = None,
+    ) -> Trellis2Result:
+        """Generate a PBR-textured object GLB from ONE matted crop.
+
+        ``provenance`` (the object_crops manifest entry) is folded into the
+        result lineage so the asset traces back to its source observation.
+        Backsides are model-completed (``surface: inferred``); the escalation
+        ladder for hero assets is seed re-rolls + an image-edit alternative
+        view, per PRD v4 R7 — never synthesized panel sets.
+        """
+        image_path = Path(image_path)
+        if not image_path.exists():
+            raise FileNotFoundError(f"Crop not found: {image_path}")
+        seed = self.seed if seed is None else seed
+        safe = "".join(c if c.isalnum() else "_" for c in label)[:40] or "object"
+
+        logger.info("TRELLIS.2 single-image generation: %s (%s/%d, seed=%d)",
+                    image_path.name, self.resolution, self.texture_size, seed)
+
+        if self.native_url:
+            result = self._generate_native(image_path, seed, safe)
+        else:
+            result = self._generate_comfyui(image_path, seed, safe)
+
+        result.lineage = {
+            "conditioning": "single-image",
+            "crop": str(image_path),
+            "generator": "TRELLIS.2-4B",
+            "executor": result.backend,
+            "resolution": self.resolution,
+            "seed": seed,
+            "surface": "observed-front/inferred-back",
+            **({"source": provenance} if provenance else {}),
+            **result.lineage,
+        }
         return result

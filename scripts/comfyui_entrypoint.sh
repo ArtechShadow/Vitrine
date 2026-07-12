@@ -65,11 +65,23 @@ if ! $PY -c "import drtk; from drtk.interpolate import interpolate" >/dev/null 2
   echo "[comfyui-entrypoint] drtk ABI mismatch vs installed torch — rebuilding drtk from source ..."
   DRTK_PATCH=/tmp/drtk_abi_patch; mkdir -p "$DRTK_PATCH"
   printf 'try:\n import torch.utils.cpp_extension as _c\n _c._check_cuda_version=lambda *a,**k:None\nexcept Exception:\n pass\n' > "$DRTK_PATCH/sitecustomize.py"
-  PYTHONPATH="$DRTK_PATCH:$PYTHONPATH" TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-8.9}" \
-    $PY -m pip install --break-system-packages -q --force-reinstall --no-build-isolation --no-deps \
-    "git+https://github.com/facebookresearch/drtk.git" >/dev/null 2>&1 || true
-  $PY -c "import drtk; from drtk.interpolate import interpolate; print('[comfyui-entrypoint] drtk rebuilt from source OK')" 2>/dev/null \
-    || echo "[comfyui-entrypoint] WARNING: drtk still unavailable — TRELLIS.2 PBR texturing will fall back to untextured geometry"
+  # Retry the source build: the compile can fail transiently (transient network
+  # on the git+ fetch, a killed nvcc under VRAM pressure). A silent single-shot
+  # failure here left drtk ABI-broken and TRELLIS.2 PBR dying MID-generation
+  # (observed 2026-07-10, after minutes of wasted shape-stage compute), so we
+  # try twice before giving up — a cheap insurance against a costly late failure.
+  drtk_ok=0
+  for attempt in 1 2; do
+    PYTHONPATH="$DRTK_PATCH:${PYTHONPATH:-}" TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-8.9}" \
+      $PY -m pip install --break-system-packages -q --force-reinstall --no-build-isolation --no-deps \
+      "git+https://github.com/facebookresearch/drtk.git" >/dev/null 2>&1 || true
+    if $PY -c "import drtk; from drtk.interpolate import interpolate" >/dev/null 2>&1; then
+      echo "[comfyui-entrypoint] drtk rebuilt from source OK (attempt $attempt)"
+      drtk_ok=1; break
+    fi
+    echo "[comfyui-entrypoint] drtk rebuild attempt $attempt failed; retrying ..."
+  done
+  [ "$drtk_ok" = 1 ] || echo "[comfyui-entrypoint] ERROR: drtk still unavailable after 2 attempts — TRELLIS.2 PBR texturing WILL FAIL at Trellis2RasterizePBR (grep this line)"
 fi
 # Pure-python runtime deps the TRELLIS pipeline imports (utils3d needs --no-deps
 # to avoid a resolver conflict; the rest install clean).
@@ -197,8 +209,12 @@ _VAE=/comfyui/models/hunyuan3d-2.1/hunyuan3d-vae-v2-1/model.fp16.ckpt
 [ -f "$_DIT" ] && ln -sf "$_DIT" /comfyui/models/diffusion_models/hunyuan3d-dit-v2-1-fp16.ckpt 2>/dev/null || true
 [ -f "$_VAE" ] && ln -sf "$_VAE" /comfyui/models/vae/Hunyuan3D-vae-v2-1-fp16.ckpt 2>/dev/null || true
 
-echo "[comfyui-entrypoint] launching ComfyUI on :8188 ..."
-# CUDA_VISIBLE_DEVICES (set by run_comfyui.sh) already masks to the chosen GPU,
-# so the in-container device index is 0.
-exec $PY main.py --listen 0.0.0.0 --port 8188 --cuda-device 0 \
+echo "[comfyui-entrypoint] launching ComfyUI on :8188 (CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}) ..."
+# GPU selection comes from run_comfyui.sh via CUDA_VISIBLE_DEVICES (COMFYUI_GPU).
+# Do NOT pass --cuda-device: ComfyUI implements that flag by UNCONDITIONALLY
+# overwriting CUDA_VISIBLE_DEVICES, so `--cuda-device 0` un-masked the container
+# back onto physical GPU 0 — colliding with the resident DiffusionGemma server
+# (~40 GB) and OOMing every big job (root cause of the 2026-07-04 exit-137 and
+# the 2026-07-09 Trellis2ImageToShape OOM).
+exec $PY main.py --listen 0.0.0.0 --port 8188 \
     --extra-model-paths-config /comfyui/extra_model_paths.yaml --preview-method auto

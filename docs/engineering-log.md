@@ -1,6 +1,189 @@
 # Engineering Log
 
-Development history and key decisions for the Gaussian Toolkit fork of LichtFeld Studio.
+Development history for Vitrine (a standalone project that vendors LichtFeld Studio as a pinned tool; formerly a fork — see ADR-021).
+
+## 2026-07-10 — R7 best-of-N quality ladder + drtk self-heal hardened
+
+### R7 — best-of-N seed re-rolls with a silhouette-consistency scorer
+
+Single-shot generation was a quality ceiling; backside hallucination is
+ADR-025's stated #1 risk. `trellis2.best_of_n > 1` now runs N seed re-rolls
+and keeps the best (default 1 = unchanged). New pure module
+`object_candidate_score.py` scores each candidate by a deliberately modest,
+honest signal — a FRONT-silhouette proxy, not a full 3D metric: proportion
+agreement (mesh front aspect vs the crop's observed silhouette aspect, via
+`|log(ratio)|`, scale-invariant + symmetric) gated by mesh sanity (face-count
+floor + watertight bonus; a degenerate mesh scores 0). It does not directly
+detect backside hallucination (true multi-view scoring is future work) — it
+picks, among N seeds, the candidate most consistent with the one observation
+we have, and records EVERY candidate's score in the winner's lineage for
+human / R9 review. 8 scorer unit tests + a best-of-N selection stage test;
+validated in a clean CI-deps venv (99 passed) + container subset (162).
+
+### drtk self-heal hardened after a live PBR failure
+
+The R7 live proof surfaced a real infra fragility (NOT in the R7 code, which
+degraded correctly): ComfyUI's `drtk` was ABI-broken against torch 2.12
+(`Trellis2RasterizePBR` → `undefined symbol` mid-generation), even though an
+earlier run that day succeeded. The `comfyui_entrypoint.sh` self-heal rebuilds
+drtk from source but was a silent single shot (`|| true`), so a transient
+compile failure left PBR broken until the next restart — discovered only after
+minutes of wasted shape-stage compute. Hardened to **retry twice** with a
+loud, greppable ERROR on final failure. Rebuilt drtk in the live container to
+unblock the proof.
+
+## 2026-07-10 — Mega-image rebuilt (gate + SPA baked) + R10 object pose-solve
+
+### Image rebuild closed the last runtime security gap
+
+Rebuilt `gaussian-toolkit:latest` (`ed36b0bd26e6`, `BUILD_SPA=1`) and recreated
+the container. The LichtFeld builder + base layers cache-hit (binary intact,
+174 MB; no CUDA recompile), so only the tail rebuilt. Runtime-verified in the
+fresh container:
+- **ttyd gate is now LIVE** (gap #3): with the default `VITRINE_CLAUDE_ENABLED=0`
+  there is NO `:7681` listener — it had been an unconditional listener because
+  the *baked* `supervisord.conf` predated the gate. Both branches exercised
+  (disabled → exits; enabled → loopback ttyd, warns without a credential).
+- **ttyd/VNC second-factor paths baked** (gap #14): `VITRINE_TTYD_CREDENTIAL` +
+  `VITRINE_VNC_PASSWORD` present and wired.
+- **SPA baked** into `static/spa/` — retires the live-`docker cp` injection; a
+  fresh clone+build now serves the Vitrine SPA with no manual step.
+- All host publishes remain loopback-pinned (7860/7681/8188/8200/45677/5902).
+
+### R10 — object pose-solve at USD assembly (PRD v4)
+
+Generated GLBs are in TRELLIS's own normalized frame, so before this they
+assembled at the world origin at unit scale. New pure module
+`object_placement.py` solves position + uniform scale from the object's
+Gaussian subset (already in COLMAP-world coords): `scale = real_max_extent /
+glb_max_extent`, `translate = world_centroid`. `mesh_objects` records the GLB's
+own bbox (`glb_extent`); `assemble_usd` writes `usd/placements.json`; the
+standalone assembler applies translate + uniform scale (× SCENE_SCALE) when a
+placement exists, else the legacy self-centroid path. **Orientation is left
+identity and flagged `unsolved`** — the honest ADR-025 D3 posture (a full
+orientation solve from the crop pose + silhouette is future work). 8 new
+solver unit tests + a placements-emission stage test; pure math, no deps.
+
+## 2026-07-09 (evening) — Security posture APPLIED live + hardening pass + `pipeline objects` CLI
+
+### The live system was still LAN-open — now loopback-everywhere (verified)
+
+The ADR-024 loopback pins existed only in compose; the running `gaussian-toolkit`
+predated them and was publishing ttyd `:7681`, ComfyUI `:8188`, LichtFeld MCP
+`:45677` and passwordless VNC `:5902` on `0.0.0.0`. Containers recreated from
+current config; **`ss -tlnp` now shows every pipeline port
+(7860/7681/8188/8200/45677/5902) on `127.0.0.1` only.** Three new findings
+fixed in the same pass (gap register #11–#13):
+
+- **#11** `run_comfyui.sh` published `:8200` on `0.0.0.0` (no-auth ComfyUI,
+  RCE-class Manager surface) — missed by the register's #9 verdict. Pinned.
+- **#12** the "secure by default" `LFS_WEB_HOST=127.0.0.1` compose default was
+  a **functional regression, not a hardening**: docker-proxy connects to the
+  container's bridge IP, so a container-loopback bind makes the pinned host
+  publish — and the documented SSH tunnel — dead. The boundary is the
+  `host_ip: 127.0.0.1` publish; compose now binds `0.0.0.0` in-container with
+  the rationale documented in compose + `app.py`. Tunnel path live-verified.
+- **#13** live probing the file API found `%00` in `?path=` → 500 (unhandled
+  past the jail); now 400. Traversal probes (plain/encoded/absolute/run-id)
+  all correctly refused; extension allow-list enforced.
+- **#14** defence-in-depth credentials plumbed: `VITRINE_TTYD_CREDENTIAL`
+  (ttyd basic-auth) + `VITRINE_VNC_PASSWORD` (x11vnc), through compose +
+  the mounted `vitrine-terminal.sh`/`entrypoint.sh`. Default = tunnel-only,
+  warned at boot. Caveat: the baked `supervisord.conf` predates the ttyd gate,
+  so the gate + credential activate at the next image rebuild; the loopback
+  publish is the interim control.
+
+### `pipeline objects` — the object arc as a first-class CLI
+
+`python3 -m pipeline.cli objects <job_dir> [--concepts ...] [--skip-segment]`
+runs segment → object_crops → extract_objects → mesh_objects → texture_bake
+on an existing trained run — the committed form of the flow that produced the
+first validated automated objects, without repeating the COLMAP/training
+front-end. Auto-detects the newest model PLY + frames dir; loud failures
+propagate; generator assets are tagged `[generator, PBR verbatim]`.
+
+## 2026-07-09 — Object pipeline convergence implemented (PRD v4 / ADR-025) + SAM3 root cause FIXED
+
+### R1 SOLVED: "SAM3 returns boxes" was an HWC/CHW bug in OUR wrapper — one-line fix
+
+The audit's blocker defect F1 is closed, and the root cause was ours, not SAM3's:
+`Sam3Processor.set_image`'s numpy branch reads `height, width = image.shape[-2:]`
+(correct for CHW tensors); our `sam3_segmentor` passed HWC frames, so it read
+`height=W, width=3`. Detection still worked (model input conversion handles HWC)
+but every output mask was interpolated to a **W×3 grid** and boxes were scaled by
+(3, W) — which downstream resizing smeared into the notorious "coarse boxes".
+Fix: pass PIL images (`_to_pil` in `sam3_segmentor.py`). Verified on rawcapdev:
+pixel-accurate silhouettes for vessel (fill 0.86, score 0.94), ketchup bottle
+(0.79/0.57) and wooden block (0.75/0.92) — overlay at
+`output/rawcapdev/sam3_fixed_overlay.jpg`.
+
+### First-ever validated automated per-object isolation on real data
+
+With silhouettes fixed + new binary-COLMAP support (`parse_cameras_bin`/
+`parse_images_bin` + format-agnostic loaders — the direct-COLMAP path emits
+bin-only models, which would otherwise fail loudly), the full Phase-1/2 arc ran
+live on rawcapdev: segment → **object_crops** (new stage) → extract_objects
+MV-projected **1.09M/4M gaussians (vessel), 246k (bottle), 250k (block)** across
+6 views. Zero fallbacks, zero failures. Crops are generator-ready RGBA mattes at
+native res (vessel 3175²) with full provenance (frame, bbox, COLMAP pose,
+matting method, selection scores) in `object_crops/crops.json`.
+
+### ADR-025 implementation (all PRD v4 phases except live 3D generation)
+
+- **R2** `extract_objects`: full-scene-copy + world-XY fallbacks DELETED; per-object
+  failures reported with cause (`object_failures` artifact). `full_scene` label
+  (the environment) still copies by design.
+- **R3** new `object_crops` stage (`src/pipeline/object_crops.py` + config):
+  best-frame selection = silhouette area × log-sharpness × centrality × edge
+  clearance; SAM-matte alpha; rembg fallback for box-like masks; ≥1024² square pad.
+- **R4** multiview conditioning RETIRED: `trellis2_client.py` rewritten single-image
+  (ComfyUI executor now, native-service contract ready); `view_completer.py`,
+  `trellis2_multiview_pbr.json`, `flux2_turnaround.json` + all 3 stock-node Hunyuan
+  workflow JSONs deleted; `multiview_renderer` kept preview-only and fixed to
+  straight alpha (F4 un-premultiply).
+- **R5** `scripts/trellis2_native_service.py` scaffold (HTTP contract final; model
+  calls marked VERIFY-ON-ENV-BUILD; client flips via `trellis2.native_url`).
+- **R6** generator GLB bytes persisted byte-identical (sha256 recorded, lineage
+  sidecar per asset); `texture_bake` skips generator meshes (F7 closed).
+- **R6a** Hunyuan fallback = `reconstruct_from_image()` submitting the PROVEN
+  Hy3D21 graph (hy3d_turnaround.py lineage) in code.
+- **R9** eval harness `eval/objects/run_eval.py` (+ blender turntable): mesh
+  stats/regression gates; `--stats-only` validated against the 2026-07-02 brass
+  vessel GLB (274,588 verts / 483,671 faces / PBRMaterial — exact match).
+- **Tests**: 30 new unit tests (crops, single-image client, object-arc
+  regressions); pipeline subset **144/144 green** in-container.
+
+### LIVE RUNTIME VERIFICATION: crop → single-image TRELLIS.2 → PBR GLB
+
+The full ADR-025 arc ran end-to-end on GPU 1: the automated vessel crop →
+`Trellis2ImageToShape` (1536_cascade, seed 42) → **54.8 MB PBR GLB, 286,009
+verts / 491,067 faces in 479 s**, persisted byte-identical (sha256
+`496d9a84…`) with lineage sidecar — same output class as the manual
+2026-07-02 vessel (274,588 / 483,671). Workbench turntable confirms solid
+geometry + patina albedo (`output/object_e2e/`). Smoke script:
+`scripts/run_hull_e2e.py` (rewritten crop-based; the splat-render version is
+gone).
+
+### Infra root causes fixed along the way
+
+- **ComfyUI has been fighting DiffusionGemma for GPU 0 all along**:
+  `comfyui_entrypoint.sh` passed `--cuda-device 0`, and ComfyUI implements
+  that flag by UNCONDITIONALLY overwriting `CUDA_VISIBLE_DEVICES` — stomping
+  `run_comfyui.sh`'s `COMFYUI_GPU` masking and un-masking the container back
+  onto physical GPU 0 (~40 GB held by the resident LLM server). Explains the
+  2026-07-04 exit-137 OOM-kill and today's first Trellis2ImageToShape OOM
+  (torch saw 19 MiB free on a "47 GiB" device). Fixed: flag dropped, GPU
+  selection now genuinely `COMFYUI_GPU` (`COMFYUI_GPU=1 scripts/run_comfyui.sh`
+  is the working setup while DiffusionGemma owns GPU 0).
+- `set -u` crash in the drtk self-heal (`$PYTHONPATH` unset) — entrypoint died
+  before ComfyUI launch. Fixed (`${PYTHONPATH:-}`).
+- Blender 5 eval turntables: EEVEE renders TRELLIS.2's atlas-padding alpha as
+  transparent patchwork → harness renders with WORKBENCH + texture color.
+
+**Open:** native service env stand-up (R5 acceptance); Pixal3D head-to-head
+(R8; NOTE: Pixal3D is MIT — ADR-025 amended 2026-07-09); R10 pose-solve at
+assembly (placement hints already recorded per asset); R9 references baseline
+committed from the first 3-object eval sweep.
 
 ## 2026-07-02 — First LichtFeld-native E2E on real raw capture (rawcapdev) + build, pipeline, and web fixes
 

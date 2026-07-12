@@ -165,6 +165,10 @@ def _jailed(root: Path, rel: str) -> Path:
     """
     if rel is None or rel == "":
         abort(400, description="path is required")
+    # NUL / control bytes explode deep inside pathlib/send_file as a 500;
+    # reject them at the boundary (found by live probe 2026-07-09).
+    if any(ord(c) < 0x20 for c in rel):
+        abort(400, description="invalid path")
 
     joined = safe_join(str(root), rel)
     if joined is None:  # '..', absolute, or otherwise traversing
